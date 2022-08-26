@@ -1,11 +1,10 @@
-# StealthNet
+# RemovalNet
+
+RemovalNet: DNN model fingerprinting removal attack
 
 
-命令示例：
+> more detail will coming soon.
 
 
-**训练StealthNet**
-
-
-
-**测试**
+# License
+This library is under the MIT license. For the full copyright and license information, please view the LICENSE file that was distributed with this source code.
