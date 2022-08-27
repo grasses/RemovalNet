@@ -61,7 +61,9 @@ def lazy_property(func):
 
 
 def model_args():
-    args = argparse.Namespace()
+    parser = argparse.ArgumentParser(description="Build benchmark.")
+    parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
+    args, unknown = parser.parse_known_args()
     args.const_lr = False
     args.batch_size = BATCH_SIZE
     args.lr = 5e-3
@@ -81,6 +83,7 @@ def model_args():
     args.feat_layers = '1234'
     args.no_save = False
     args.steal = False
+    args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else torch.device("cpu")
     return args
 
 

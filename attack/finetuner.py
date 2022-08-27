@@ -34,8 +34,6 @@ from utils import *
 from attack.functional import *
 from utils.tools import *
 from utils.metric import *
-from utils import helper
-sys_args = helper.get_args()
 
 
 class Finetuner(object):
@@ -48,8 +46,9 @@ class Finetuner(object):
         test_loader,
     ):
         self.args = args
-        self.model = model.to(sys_args.device)
-        self.teacher = teacher.to(sys_args.device)
+        self.device = args.device
+        self.model = model.to(self.device)
+        self.teacher = teacher.to(self.device)
         self.train_loader = train_loader
         self.test_loader = test_loader
 
@@ -229,7 +228,7 @@ class Finetuner(object):
             top1 = 0
             
             for i, (batch, label) in enumerate(loader):
-                batch, label = batch.to(sys_args.device), label.to(sys_args.device)
+                batch, label = batch.to(self.device), label.to(self.device)
                 total += batch.size(0)
                 
                 teacher_out = teacher(batch)
@@ -264,7 +263,7 @@ class Finetuner(object):
             if loss:
                 teacher.eval()
 
-                ce = CrossEntropyLabelSmooth(loader.dataset.num_classes, args.label_smoothing).to(sys_args.device)
+                ce = CrossEntropyLabelSmooth(loader.dataset.num_classes, args.label_smoothing).to(self.device)
                 featloss = torch.nn.MSELoss(reduction='none')
 
             total_ce = 0
@@ -274,7 +273,7 @@ class Finetuner(object):
             total = 0
             top1 = 0
             for i, (batch, label) in enumerate(loader):
-                batch, label = batch.to(sys_args.device), label.to(sys_args.device)
+                batch, label = batch.to(self.device), label.to(self.device)
 
                 total += batch.size(0)
                 out = model(batch)
@@ -384,7 +383,7 @@ class Finetuner(object):
             )
 
         teacher.eval()
-        ce = CrossEntropyLabelSmooth(train_loader.dataset.num_classes, args.label_smoothing).to(sys_args.device)
+        ce = CrossEntropyLabelSmooth(train_loader.dataset.num_classes, args.label_smoothing).to(self.device)
         featloss = torch.nn.MSELoss()
 
         batch_time = MovingAverageMeter('Time', ':6.3f')
@@ -421,7 +420,7 @@ class Finetuner(object):
             except:
                 dataloader_iterator = iter(train_loader)
                 batch, label = next(dataloader_iterator)
-            batch, label = batch.to(sys_args.device), label.to(sys_args.device)
+            batch, label = batch.to(self.device), label.to(self.device)
             data_time.update(time.time() - end)
 
             if args.steal:
@@ -448,11 +447,11 @@ class Finetuner(object):
                 # print(k, m)
                 if isinstance(m, nn.Conv2d):
                     weight_copy = m.weight.data.abs().clone()
-                    mask = weight_copy.gt(0).float().to(sys_args.device)
+                    mask = weight_copy.gt(0).float().to(self.device)
                     m.weight.grad.data.mul_(mask)
                 if isinstance(m, nn.Linear):
                     weight_copy = m.weight.data.abs().clone()
-                    mask = weight_copy.gt(0).float().to(sys_args.device)
+                    mask = weight_copy.gt(0).float().to(self.device)
                     m.weight.grad.data.mul_(mask)
             #-----------------------------------------
             optimizer.step()

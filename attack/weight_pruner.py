@@ -30,8 +30,6 @@ from model.inputx224.fe_mobilenet import fembnetv2
 
 from utils import *
 from attack.finetuner import Finetuner
-from utils import helper
-sys_args = helper.get_args()
 
 
 class WeightPruner(Finetuner):
@@ -50,6 +48,7 @@ class WeightPruner(Finetuner):
             self.args.weight_ratio >= 0 
         )
         self.args = args
+        self.device = args.device
         self.log_path = osp.join(self.args.output_dir, "prune.log")
         self.logger = open(self.log_path, "w")
         self.init_prune()
@@ -138,7 +137,7 @@ class WeightPruner(Finetuner):
         log = (f"Total conv params: {total}, Pruned conv params: {pruned}, "
         f"Pruned ratio: {pruned/total:.2f}")
         self.prune_record(log)
-        self.model = model.to(sys_args.device)
+        self.model = model.to(self.device)
 
     def final_check_param_num(self):
         self.logger = open(self.log_path, "a")
