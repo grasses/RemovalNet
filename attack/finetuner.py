@@ -44,6 +44,7 @@ class Finetuner(object):
         teacher,
         train_loader,
         test_loader,
+        init_models=True
     ):
         self.args = args
         self.device = args.device
@@ -52,7 +53,10 @@ class Finetuner(object):
         self.train_loader = train_loader
         self.test_loader = test_loader
 
-        self.init_models()
+        self.reg_layers = {}
+        if init_models:
+            self.init_models()
+
 
     def init_models(self):
         args = self.args

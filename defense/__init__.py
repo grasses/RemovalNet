@@ -24,7 +24,8 @@ class Fingerprinting(ABC):
         self.exp_root = osp.join(out_root, "exp")
         self.cache_root = osp.join(out_root, "cache")
         self.fingerprint_root = osp.join(out_root, "fingerprint")
-        for path in [self.out_root, self.exp_root, self.cache_root, self.fingerprint_root]:
+        self.ckpt_root = osp.join(out_root, "ckpt")
+        for path in [self.out_root, self.exp_root, self.cache_root, self.fingerprint_root, self.ckpt_root]:
             if not osp.exists(path):
                 os.makedirs(path)
 
