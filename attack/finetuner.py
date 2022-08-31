@@ -145,8 +145,8 @@ class Finetuner(object):
         # KD_loss = F.cross_entropy(out, teacher_pred)
         # soft_loss, hard_loss = 0, 0
         
-        out = F.softmax(out)
-        teacher_out = F.softmax(teacher_out)
+        out = F.softmax(out, dim=1)
+        teacher_out = F.softmax(teacher_out, dim=1)
         KD_loss = CXE(out, teacher_out)
         soft_loss, hard_loss = 0, 0
         
@@ -301,7 +301,10 @@ class Finetuner(object):
                             total_feat_reg[i] += regloss.item()
 
                     _, unweighted = l2sp(model, 0)
-                    total_l2sp_reg += unweighted.item()
+                    try:
+                        total_l2sp_reg += unweighted.item()
+                    except:
+                        pass
                 # break
 
         return float(top1)/total*100, total_ce/(i+1), np.sum(total_feat_reg)/(i+1), total_l2sp_reg/(i+1), total_feat_reg/(i+1)
@@ -351,7 +354,7 @@ class Finetuner(object):
         model = self.model
         train_loader = self.train_loader
         test_loader = self.test_loader
-        iterations = self.args.iterations
+        iterations = self.args.iterations + 1
         lr = self.args.lr
         output_dir = self.args.output_dir
         l2sp_lmda = self.args.l2sp_lmda
@@ -470,7 +473,7 @@ class Finetuner(object):
                 progress = ProgressMeter(
                     iterations,
                     [batch_time, data_time, top1_meter, total_loss_meter, ce_loss_meter, feat_loss_meter, l2sp_loss_meter, linear_loss_meter],
-                    prefix="LR: {:6.3f}".format(current_lr),
+                    prefix="LR: {:6.3f}\n".format(current_lr),
                     output_dir=output_dir,
                 )
                 progress.display(i)
@@ -517,15 +520,30 @@ class Finetuner(object):
                         round(test_weight_loss,2),
                     ]
                     af.write('\t'.join([str(c) for c in test_cols]) + '\n')
+
                 if not args.no_save:
                     ckpt_path = osp.join(
                         args.output_dir,
                         "ckpt.pth"
                     )
                     torch.save(
-                        {'state_dict': model.state_dict()}, 
+                        {
+                            'state_dict': model.state_dict(),
+                            'acc_top1': round(test_top1, 3),
+                            'test_ce_loss': round(test_ce_loss, 3),
+                            'test_feat_loss': round(test_feat_loss, 3),
+                            'test_weight_loss': round(test_weight_loss, 3)
+                        },
                         ckpt_path,
                     )
+
+                if i == (iterations-1):
+                    acc_path = osp.join(
+                        args.output_dir,
+                        f"final_{round(test_top1, 3)}.tsv"
+                    )
+                    torch.save({}, acc_path)
+
 
             if ( hasattr(self, "iterative_prune") and i % args.prune_interval == 0 ):
                 self.iterative_prune(i)

@@ -234,7 +234,7 @@ def densenet121(num_classes=1000, pretrained='imagenet'):
         settings = pretrained_settings['densenet121'][pretrained]
         model = load_pretrained(model, 1000, settings)
     model = modify_densenets(model)
-    model.last_linear = torch.nn.Linear(2208, num_classes, bias=True)
+    model.last_linear = torch.nn.Linear(1024, num_classes, bias=True)
     return model
 
 def densenet169(num_classes=1000, pretrained='imagenet'):
@@ -246,7 +246,7 @@ def densenet169(num_classes=1000, pretrained='imagenet'):
         settings = pretrained_settings['densenet169'][pretrained]
         model = load_pretrained(model, 1000, settings)
     model = modify_densenets(model)
-    model.last_linear = torch.nn.Linear(2208, num_classes, bias=True)
+    model.last_linear = torch.nn.Linear(1024, num_classes, bias=True)
     return model
 
 def densenet201(num_classes=1000, pretrained='imagenet'):
@@ -258,7 +258,7 @@ def densenet201(num_classes=1000, pretrained='imagenet'):
         settings = pretrained_settings['densenet201'][pretrained]
         model = load_pretrained(model, 1000, settings)
     model = modify_densenets(model)
-    model.last_linear = torch.nn.Linear(2208, num_classes, bias=True)
+    model.last_linear = torch.nn.Linear(1024, num_classes, bias=True)
     return model
 
 def densenet161(num_classes=200, pretrained='imagenet'):
@@ -270,7 +270,7 @@ def densenet161(num_classes=200, pretrained='imagenet'):
         settings = pretrained_settings['densenet161'][pretrained]
         model = load_pretrained(model, 1000, settings)
     model = modify_densenets(model)
-    model.last_linear = torch.nn.Linear(2208, num_classes, bias=True)
+    model.last_linear = torch.nn.Linear(1024, num_classes, bias=True)
     return model
 
 ###############################################################

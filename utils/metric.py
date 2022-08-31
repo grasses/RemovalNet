@@ -43,7 +43,7 @@ def topk_test(model, test_loader, device, epoch=0, debug=False):
             correct["top-5"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
             size += len(x)
     test_loss /= (1.0 * size)
-    print("-> correct", correct["top-1"])
+
     topk_acc["top-1"] = round(100.0 * correct["top-1"] / size, 5)
     topk_acc["top-3"] = round(100.0 * correct["top-3"] / size, 5)
     topk_acc["top-5"] = round(100.0 * correct["top-5"] / size, 5)
