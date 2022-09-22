@@ -17,11 +17,26 @@ from torchvision import transforms
 import math
 
 
-def loss_kd(preds, labels, teacher_preds, alpha, T):
+def numpy(x):
+    if torch.is_tensor(x):
+        return x.detach().cpu().numpy()
+    elif type(x) is type([]):
+        return np.array(x)
+
+
+def at(x):
+    return F.normalize(x.pow(2).mean(1).view(x.size(0), -1))
+
+
+def loss_at(x, y):
+    return (at(x) - at(y)).pow(2).mean()
+
+
+def loss_kd(logit, labels, teacher_logit, alpha=0.5, T=1):
     loss = F.kl_div(
-        F.log_softmax(preds / T, dim=1),
-        F.softmax(teacher_preds / T, dim=1), reduction='batchmean') * T * T * alpha + \
-           F.cross_entropy(preds, labels) * (1. - alpha)
+        F.log_softmax(logit / T, dim=1),
+        F.softmax(teacher_logit / T, dim=1), reduction='batchmean') * T * T * alpha + \
+           F.cross_entropy(logit, labels) * (1. - alpha)
     return loss
 
 
@@ -32,6 +47,7 @@ def linear_l2(model, beta_lmda):
             beta_loss += (m.weight).pow(2).sum()
             beta_loss += (m.bias).pow(2).sum()
     return 0.5 * beta_loss * beta_lmda, beta_loss
+
 
 def l2sp(model, reg):
     reg_loss = 0
@@ -49,7 +65,6 @@ def l2sp(model, reg):
 
     if dist > 0:
         dist = dist.sqrt()
-
     loss = (reg * reg_loss)
     return loss, dist
 

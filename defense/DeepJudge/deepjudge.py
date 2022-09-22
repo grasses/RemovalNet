@@ -19,6 +19,7 @@ import pytz
 import numpy as np
 import os.path as osp
 from defense import Fingerprinting
+from dataset import loader
 from . import ops
 from .generation import BlackboxSeeding, WhiteboxSeeding
 format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
@@ -27,7 +28,7 @@ out_root = osp.join(ROOT, "output")
 
 
 class DeepJudge(Fingerprinting):
-    def __init__(self, model1, model2, device, out_root,
+    def __init__(self, model1, model2, test_loader, device, out_root,
                  blackbox=False, seed_method="PGD", layer_index=4,
                  batch_size=200, DIGISTS=4):
         super().__init__(model1, model2, device=device, out_root=out_root)
@@ -45,9 +46,9 @@ class DeepJudge(Fingerprinting):
         self.logger.info(f'-> comparing {model1} vs {model2}')
 
         # init dataset
-        self.dataset = model1.dataset_id
-        self.test_loader = model1.get_test_loader(batch_size=batch_size)
-        self.bounds = self.test_loader.bounds
+        self.test_loader = test_loader
+        self.bounds = test_loader.bounds
+        self.dataset = test_loader.dataset_id
 
         # init model
         self.arch1 = str(model1)
@@ -61,14 +62,17 @@ class DeepJudge(Fingerprinting):
     def extract(self):
         # step1: generate seed samples
         Bseed = BlackboxSeeding(self.model1, arch=self.arch1, test_loader=self.test_loader, dataset=self.dataset,
-                                batch_size=self.batch_size)
+                                batch_size=self.batch_size, out_root=self.fingerprint_root)
         Wseed = WhiteboxSeeding(self.model1, arch=self.arch1, test_loader=self.test_loader, dataset=self.dataset,
-                                batch_size=self.batch_size)
+                                batch_size=self.batch_size, out_root=self.fingerprint_root)
         seed_x, seed_y = Bseed.load_seed_samples()
 
         # step2: generate test samples
         test_x, test_y = Bseed.generate(seed_x=seed_x, seed_y=seed_y, method=self.seed_method)
         tests = Wseed.generate(seed_x=seed_x, seed_y=seed_y, layer_index=self.layer_index)
+        min_size = min([len(v) for v in tests.values()])
+        for k, v in tests.items():
+            tests[k] = v[:min_size]
 
         fingerprint_data = {
             "whitebox": tests,
@@ -278,7 +282,7 @@ class DeepJudge(Fingerprinting):
             outputs2 = ops.batch_mid_forward(model2, samples, layer_index=layer_index)
             assert outputs1.shape == outputs2.shape
             outputs1 = torch.mean(torch.reshape(outputs1, (outputs1.shape[0], -1, outputs1.shape[-1])), dim=1)
-            outputs2 = torch.mean(torch.reshape(outputs2, (outputs1.shape[0], -1, outputs2.shape[-1])), dim=1)
+            outputs2 = torch.mean(torch.reshape(outputs2, (outputs2.shape[0], -1, outputs2.shape[-1])), dim=1)
             outputs1_normlized = normalize(self._numpy(outputs1))
             outputs2_normlized = normalize(self._numpy(outputs2))
             activations1 = np.array([np.where(i > theta, 1, 0) for i in outputs1_normlized])
@@ -293,6 +297,7 @@ class DeepJudge(Fingerprinting):
 
 
 def benchmark_testing(args, victim):
+    from benchmark import ImageBenchmark
     benchmark = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
     benchmark.list_models()
 
@@ -332,6 +337,7 @@ def get_args():
     parser.add_argument("-model2", action="store", dest="model2",
                         default="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-", required=True, help="model 2.")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
+    parser.add_argument("-seed_method", action="store", default="PGD", type=str, choices=["FGSM", "PGD", "CW"], help="Type of blackbox generation")
     parser.add_argument("-batch_size", action="store", default=200, type=int, help="GPU device id")
     parser.add_argument("-seed", default=999, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
@@ -352,14 +358,17 @@ def main():
                         format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
                         )#filename=f"{args.logs_root}/{filename}_{args.namespace}.txt")
     benchmark = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
+
     model1 = benchmark.get_model_wrapper(args.model1)
     model2 = benchmark.get_model_wrapper(args.model2)
+    test_loader = loader.get_dataloader(model1.dataset_id)
+
     layer_index = 5
     if "quantize" in str(model1) or "quantize" in str(model2):
         args.device = torch.device("cpu")
 
     out_root = osp.join(args.out_root, "DeepJudge")
-    deepjudge = DeepJudge(model1, model2, device=args.device, out_root=out_root, batch_size=args.batch_size, layer_index=layer_index)
+    deepjudge = DeepJudge(model1, model2, test_loader=test_loader, device=args.device, out_root=out_root, batch_size=args.batch_size, layer_index=layer_index, seed_method=args.seed_method)
     dist = deepjudge.verify(deepjudge.extract())
     print(f"-> DeepJudge dist: {dist}")
 
@@ -369,51 +378,84 @@ if __name__ == "__main__":
 
     """
     Example command:
-    <===========================  Flower102-resnet18  ===========================>
-    model1="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-"
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "train(resnet18,Flower102)-" -device 1
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-distill()-" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-quantize(qint8)-" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-prune(0.8)-" -device 0
-    
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-stealthnet(0.7,20)-" -device 1
-
+    <===========================  Flower102-resnet18:20220901_Test  ===========================>
+    SCRIPT="defense.DeepJudge.deepjudge"
     
     model1="train(resnet18,Flower102)-"
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-distill()-" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-prune(0.8)-" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-stealthnet(0.7,20)-" -device 1
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-" -device 0
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-stealthnet(0.7,20)-" -device 0
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-" -device 0
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-stealthnet(0.7,20)-" -device 0
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-" -device 0  
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-stealthnet(0.7,20)-" -device 0
+    
+    
+    model1="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-"
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-prune(0.2)-" -device 1
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-prune(0.2)-stealthnet(0.7,20)-" -device 1
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-prune(0.5)-" -device 1
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-prune(0.5)-stealthnet(0.7,20)-" -device 1
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-prune(0.8)-" -device 1
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-prune(0.8)-stealthnet(0.7,20)-" -device 1
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-distill()-" -device 1
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-distill()-stealthnet(0.7,20)-" -device 1
+    
+    
+    model1="pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-"
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-prune(0.2)-" -device 2
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-prune(0.2)-stealthnet(0.7,20)-" -device 2
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-prune(0.5)-" -device 2
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-prune(0.5)-stealthnet(0.7,20)-" -device 2
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-prune(0.8)-" -device 2
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-prune(0.8)-stealthnet(0.7,20)-" -device 2
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-distill()-" -device 2
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.5)-distill()-stealthnet(0.7,20)-" -device 2
+    
+    
+    model1="pretrain(resnet18,ImageNet)-transfer(Flower102,1)-"
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-prune(0.2)-" -device 3
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-prune(0.2)-stealthnet(0.7,20)-" -device 3    
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-prune(0.5)-" -device 3
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-prune(0.5)-stealthnet(0.7,20)-" -device 3
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-prune(0.8)-" -device 3
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-prune(0.8)-stealthnet(0.7,20)-" -device 3
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-distill()-" -device 3
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-distill()-stealthnet(0.7,20)-" -device 3
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-steal(resnet18)-" -device 0
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-steal(resnet18)-stealthnet(0.7,20)-" -device 0
     
     
     
     <===========================  Flower102-mbnetv2  ===========================>
+    model1="train(mbnetv2,Flower102)-"
+    
+    
     model1="pretrain(mbnetv2,ImageNet)-transfer(Flower102,0.1)-"
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(mbnetv2,ImageNet)-transfer(Flower102,0.1)-stealthnet(0.7,20)-" -device 0
+    python -m $SCRIPT -model1 $model1 -model2 "pretrain(mbnetv2,ImageNet)-transfer(Flower102,0.1)-stealthnet(0.7,20)-" -device 0
     
     
     
     <===========================  SDog120-resnet18  ===========================>
     model1="train(resnet18,SDog120)-"
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-stealthnet(0.7,20)-" -device 0
+    python -m "defense.DeepJudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-stealthnet(0.7,20)-" -device 0
     
     
     model1="pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-"
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "train(resnet18,SDog120)-" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-stealthnet(0.7,20)-" -device 0
+    python -m "defense.DeepJudge.deepjudge" -model1 $model1 -model2 "train(resnet18,SDog120)-" -device 0
+    python -m "defense.DeepJudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)" -device 0
+    python -m "defense.DeepJudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-stealthnet(0.7,20)-" -device 0
     
     
     
     model1="pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-"
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "train(resnet18,SDog120)-" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-" -device 0
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-stealthnet(0.7,20)-" -device 0
+    python -m "defense.DeepJudge.deepjudge" -model1 $model1 -model2 "train(resnet18,SDog120)-" -device 0
+    python -m "defense.DeepJudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-" -device 0
+    python -m "defense.DeepJudge.deepjudge" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(SDog120,0.1)-prune(0.2)-stealthnet(0.7,20)-" -device 0
     
     
     <===========================  SDog120-mbnetv2  ===========================>
     model1="pretrain(mbnetv2,ImageNet)-transfer(SDog120,0.1)-"
-    python -m "defense.deepjudge.deepjudge" -model1 $model1 -model2 "pretrain(mbnetv2,ImageNet)-transfer(SDog120,0.1)-stealthnet(0.7,20)-" -device 0
+    python -m "defense.DeepJudge.deepjudge" -model1 $model1 -model2 "pretrain(mbnetv2,ImageNet)-transfer(SDog120,0.1)-stealthnet(0.7,20)-" -device 0
     
     
     """

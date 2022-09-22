@@ -16,13 +16,7 @@ import torch
 import torch.nn as nn
 import torchvision
 import torchvision.models as models
-from dataset.mit67 import MIT67
-from dataset.stanford_dog import SDog120
-from dataset.flower102 import Flower102
-from dataset.caltech256 import Caltech257Data
-from dataset.stanford_40 import Stanford40Data
-from dataset.cub200 import CUB200Data
-
+from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data,  CUB200Data
 from model.inputx224.fe_resnet import resnet18_dropout, resnet34_dropout, resnet50_dropout, resnet101_dropout
 from model.inputx224.fe_mobilenet import mbnetv2_dropout
 from model.inputx224.fe_resnet import feresnet18, feresnet34, feresnet50, feresnet101
@@ -78,7 +72,8 @@ def model_args():
     args.weight_decay = 1e-4
     args.beta = 1e-2
     args.feat_lmda = 0
-    args.test_interval = 1000
+    args.iterations = 300
+    args.test_interval = 100
     args.adv_test_interval = -1
     args.feat_layers = '1234'
     args.no_save = False
@@ -195,6 +190,9 @@ class ModelWrapper:
 
     def get_test_loader(self, batch_size=200, shuffle=True):
         dataset_id = 'MIT67' if self.dataset_id == 'ImageNet' else self.dataset_id
+
+        print(f"-> get_test_loader, {dataset_id}")
+
         return self.benchmark.get_dataloader(dataset_id, split='test', batch_size=batch_size, shuffle=shuffle)
 
     def get_seed_inputs(self, num, rand=False, shuffle=True, with_label=False, unormalize=False):
@@ -491,8 +489,8 @@ class ModelWrapper:
         )
         return model_wrapper
 
-    def stealthnet(self, alpha, iter_size=5, iters=PRUNE_ITERS):
-        trans_str = f'stealthnet({alpha},{iter_size})'
+    def stealthnet(self, alpha, iter_size=5, ydist="l2", iters=PRUNE_ITERS):
+        trans_str = f'stealthnet({alpha},{iter_size},{ydist})'
         model_wrapper = ModelWrapper(
             benchmark=self.benchmark,
             teacher_wrapper=self,
@@ -575,9 +573,7 @@ class ImageBenchmark:
             elif gen_type == "steal":
                 target_model = target_model.steal(params[0])
             elif gen_type == "stealthnet":
-                target_model = target_model.stealthnet(params[0], params[1])
-            elif gen_type == "stealthnet_mad":
-                target_model = target_model.stealthnet(params[0], params[1])
+                target_model = target_model.stealthnet(params[0], params[1], params[2])
             else:
                 raise NotImplementedError(f"-> [ERROR] method:{gen_type} not found!")
                 exit(1)
@@ -643,6 +639,7 @@ class ImageBenchmark:
                 batch_size=batch_size, shuffle=shuffle,
                 num_workers=8, pin_memory=False
             )
+            data_loader.num_classes = dataset.num_classes
             data_loader.mean = mean
             data_loader.std = std
             data_loader.bounds = get_bounds(mean, std)
@@ -651,7 +648,7 @@ class ImageBenchmark:
             return data_loader
         except Exception as e:
             self.logger.warning(f'-> get_dataloader failed: {e}')
-            return None
+            exit(1)
 
     def load_pretrained(self, arch_id, fc=True):
         """

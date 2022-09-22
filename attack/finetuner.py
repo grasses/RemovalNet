@@ -1,34 +1,3 @@
-import os
-import os.path as osp
-import sys
-import time
-import argparse
-from pdb import set_trace as st
-import json
-import random
-from functools import partial
-
-import torch
-import numpy as np
-import torchvision
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-
-from torchvision import transforms
-
-from dataset.cub200 import CUB200Data
-from dataset.mit67 import MIT67
-from dataset.stanford_dog import SDog120
-from dataset.caltech256 import Caltech257Data
-from dataset.stanford_40 import Stanford40Data
-from dataset.flower102 import Flower102
-
-from model.inputx224.fe_resnet import resnet18_dropout, resnet50_dropout, resnet101_dropout
-from model.inputx224.fe_mobilenet import mbnetv2_dropout
-from model.inputx224.fe_resnet import feresnet18, feresnet50, feresnet101
-from model.inputx224.fe_mobilenet import fembnetv2
-from model.inputx224.fe_vgg16 import *
 
 from utils import *
 from attack.functional import *
@@ -158,7 +127,6 @@ class Finetuner(object):
         # KD_loss = soft_loss + hard_loss
         
         top1 = float(pred.eq(label).sum().item()) / label.shape[0] * 100.
-
         return KD_loss, top1, soft_loss, hard_loss
 
         

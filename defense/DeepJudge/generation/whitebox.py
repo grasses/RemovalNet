@@ -13,8 +13,8 @@ from . import BaseSeeding
 
 
 class WhiteboxSeeding(BaseSeeding):
-    def __init__(self, model, arch, test_loader, dataset, batch_size):
-        BaseSeeding.__init__(self, model, arch, test_loader, dataset)
+    def __init__(self, model, arch, test_loader, dataset, batch_size, out_root):
+        BaseSeeding.__init__(self, model, arch, test_loader, dataset, out_root)
         self.batch_size = batch_size
         self.bounds = test_loader.bounds
 
@@ -27,7 +27,7 @@ class WhiteboxSeeding(BaseSeeding):
         layer_maxs = np.max(outputs, axis=0)
         return (times * layer_maxs)
 
-    def generate(self, seed_x, seed_y, layer_index=4, m=3, alpha=0.001, iters=1000, lr=0.1, target_idx=None):
+    def generate(self, seed_x, seed_y, layer_index=4, m=3, alpha=0.001, iters=2000, lr=0.1, target_idx=None):
         """
         args:
             seeds: seeds for the generation
@@ -88,7 +88,12 @@ class WhiteboxSeeding(BaseSeeding):
                         break
 
         for idx in neurons_idxs:
-            tests[(layer_index, idx)] = torch.cat(tests[(layer_index, idx)])
+            sample = torch.cat(tests[(layer_index, idx)])
+            tests[(layer_index, idx)] = sample
+
+        min_size = min([len(v) for v in tests.values()])
+        for k, v in tests.items():
+            tests[k] = v[:min_size]
 
         self.save_test_samples(seed_x=seed_x, seed_y=seed_y, test_x=tests, test_y=[], tag="whitebox")
         self.logger.info(f"-> generate whitebox test samples done! size:{len(tests)}")

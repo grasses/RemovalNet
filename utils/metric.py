@@ -35,7 +35,7 @@ def topk_test(model, test_loader, device, epoch=0, debug=False):
             logits = model(x)
             loss = F.cross_entropy(logits, y)
             test_loss += loss.item()
-            pred = logits.argmax(dim=1, keepdim=True)
+            pred = logits.argmax(dim=1)
             correct["top-1"] += torch.eq(y.view_as(pred), pred).sum().item()
             _, tk = torch.topk(logits, k=3, dim=1)
             correct["top-3"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
