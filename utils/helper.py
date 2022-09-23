@@ -4,6 +4,7 @@
 __author__ = 'homeway'
 __copyright__ = 'Copyright © 2022/06/28, homeway'
 
+"""system helper tool (ROOT, output, args, seed)"""
 
 import os
 import sys
@@ -17,19 +18,19 @@ import functools
 import datetime
 import pytz
 format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
+ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
 
 def lazy_property(func):
     attribute = '_lazy_' + func.__name__
-
     @property
     @functools.wraps(func)
     def wrapper(self):
         if not hasattr(self, attribute):
             setattr(self, attribute, func(self))
         return getattr(self, attribute)
-
     return wrapper
+
 
 def set_default_seed(seed=999):
     random.seed(seed)
@@ -42,8 +43,7 @@ def set_default_seed(seed=999):
 
 
 def get_args():
-    ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-    parser = argparse.ArgumentParser(description="Build micro benchmark.")
+    parser = argparse.ArgumentParser(description="Build basic RemovalNet.")
     parser.add_argument("-datasets_dir", action="store", dest="datasets_dir", default=osp.join(ROOT, "dataset/data"),
                         help="Path to the dir of datasets.")
     parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(ROOT, "model/ckpt"),

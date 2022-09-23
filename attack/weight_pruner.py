@@ -1,24 +1,7 @@
-import os
+
 import os.path as osp
-import sys
-import time
-import argparse
-from pdb import set_trace as st
-import json
-import random
-
-import torch
-import numpy as np
-import torchvision
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 
-from torchvision import transforms
-from model.inputx224.fe_resnet import resnet18_dropout, resnet50_dropout, resnet101_dropout
-from model.inputx224.fe_mobilenet import mbnetv2_dropout
-from model.inputx224.fe_resnet import feresnet18, feresnet50, feresnet101
-from model.inputx224.fe_mobilenet import fembnetv2
 
 from utils import *
 from attack.finetuner import Finetuner

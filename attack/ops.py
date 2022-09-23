@@ -1,20 +1,18 @@
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+
+__author__ = 'homeway'
+__copyright__ = 'Copyright © 2022/09/22, homeway'
+
+"""important function for attacks"""
+
 import os
 import os.path as osp
-import sys
-import time
-import argparse
-from pdb import set_trace as st
-import json
 import functools
-import random
 import torch
 import numpy as np
-import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
-from torchvision import transforms
-import math
 
 
 def numpy(x):
@@ -22,14 +20,13 @@ def numpy(x):
         return x.detach().cpu().numpy()
     elif type(x) is type([]):
         return np.array(x)
-
-
-def at(x):
-    return F.normalize(x.pow(2).mean(1).view(x.size(0), -1))
+    return x
 
 
 def loss_at(x, y):
-    return (at(x) - at(y)).pow(2).mean()
+    def attention(x):
+        return F.normalize(x.pow(2).mean(1).view(x.size(0), -1))
+    return (attention(x) - attention(y)).pow(2).mean()
 
 
 def loss_kd(logit, labels, teacher_logit, alpha=0.5, T=1):
@@ -129,52 +126,6 @@ def lazy_property(func):
             setattr(self, attribute, func(self))
         return getattr(self, attribute)
     return wrapper
-
-
-class MovingAverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self, name, fmt=':f', momentum=0.9):
-        self.name = name
-        self.fmt = fmt
-        self.momentum = momentum
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.avg = self.momentum * self.avg + (1 - self.momentum) * val
-
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
-
-
-class ProgressMeter(object):
-    def __init__(self, num_batches, meters, prefix="", output_dir=None):
-        self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
-        self.meters = meters
-        self.prefix = prefix
-        if output_dir is not None:
-            self.filepath = osp.join(output_dir, "progress")
-
-    def display(self, batch):
-        entries = [self.prefix + self.batch_fmtstr.format(batch)]
-        entries += [str(meter) for meter in self.meters]
-        log_str = '\t'.join(entries)
-        print(log_str)
-        # if self.filepath is not None:
-        #     with open(self.filepath, "a") as f:
-        #         f.write(log_str+"\n")
-
-    def _get_batch_fmtstr(self, num_batches):
-        num_digits = len(str(num_batches // 1))
-        fmt = '{:' + str(num_digits) + 'd}'
-        return '[' + fmt + '/' + fmt.format(num_batches) + ']'
 
 
 class CrossEntropyLabelSmooth(nn.Module):

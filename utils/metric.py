@@ -43,14 +43,12 @@ def topk_test(model, test_loader, device, epoch=0, debug=False):
             correct["top-5"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
             size += len(x)
     test_loss /= (1.0 * size)
-
     topk_acc["top-1"] = round(100.0 * correct["top-1"] / size, 5)
     topk_acc["top-3"] = round(100.0 * correct["top-3"] / size, 5)
     topk_acc["top-5"] = round(100.0 * correct["top-5"] / size, 5)
     for k, v in topk_acc.items():
         if v > _best_topk_acc[k]:
             _best_topk_acc[k] = v
-
     msg = "-> For E{:d}, [Test] loss={:.5f}, top-1={:.3f}%, top-3={:.3f}%, top-5={:.3f}%".format(
             int(epoch),
             test_loss,
@@ -60,6 +58,7 @@ def topk_test(model, test_loader, device, epoch=0, debug=False):
     )
     if debug: print(msg)
     return _best_topk_acc, topk_acc, test_loss
+
 
 class MovingAverageMeter(object):
     """Computes and stores the average and current value"""
@@ -82,3 +81,26 @@ class MovingAverageMeter(object):
     def __str__(self):
         fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
         return fmtstr.format(**self.__dict__)
+
+
+class ProgressMeter(object):
+    def __init__(self, num_batches, meters, prefix="", output_dir=None):
+        self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
+        self.meters = meters
+        self.prefix = prefix
+        if output_dir is not None:
+            self.filepath = osp.join(output_dir, "progress")
+
+    def display(self, batch):
+        entries = [self.prefix + self.batch_fmtstr.format(batch)]
+        entries += [str(meter) for meter in self.meters]
+        log_str = '\t'.join(entries)
+        print(log_str)
+        # if self.filepath is not None:
+        #     with open(self.filepath, "a") as f:
+        #         f.write(log_str+"\n")
+
+    def _get_batch_fmtstr(self, num_batches):
+        num_digits = len(str(num_batches // 1))
+        fmt = '{:' + str(num_digits) + 'd}'
+        return '[' + fmt + '/' + fmt.format(num_batches) + ']'

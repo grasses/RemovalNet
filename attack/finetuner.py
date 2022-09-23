@@ -1,8 +1,18 @@
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
 
-from utils import *
-from attack.functional import *
-from utils.tools import *
-from utils.metric import *
+__author__ = 'homeway'
+__copyright__ = 'Copyright © 2022/09/22, homeway'
+
+"""Fine-tuning, code from: https://github.com/yuanchun-li/ModelDiff"""
+
+import time
+import os.path as osp
+import numpy as np
+import torch
+from torch import nn
+from utils import metric
+from attack import ops
 
 
 class Finetuner(object):
@@ -168,13 +178,13 @@ class Finetuner(object):
             feat_loss = regloss.item()
             # feat_loss_meter.update(regloss.item())
 
-        beta_loss, linear_norm = linear_l2(model, args.beta)
+        beta_loss, linear_norm = ops.linear_l2(model, args.beta)
         loss = loss + beta_loss 
         linear_loss = beta_loss.item()
         # linear_loss_meter.update(beta_loss.item())
 
         if l2sp_lmda != 0:
-            reg, _ = l2sp(model, l2sp_lmda)
+            reg, _ = ops.l2sp(model, l2sp_lmda)
             l2sp_loss = reg.item()
             # l2sp_loss_meter.update(reg.item())
             loss = loss + reg
@@ -235,7 +245,7 @@ class Finetuner(object):
             if loss:
                 teacher.eval()
 
-                ce = CrossEntropyLabelSmooth(loader.dataset.num_classes, args.label_smoothing).to(self.device)
+                ce = ops.CrossEntropyLabelSmooth(loader.dataset.num_classes, args.label_smoothing).to(self.device)
                 featloss = torch.nn.MSELoss(reduction='none')
 
             total_ce = 0
@@ -268,7 +278,7 @@ class Finetuner(object):
 
                             total_feat_reg[i] += regloss.item()
 
-                    _, unweighted = l2sp(model, 0)
+                    _, unweighted = ops.l2sp(model, 0)
                     try:
                         total_l2sp_reg += unweighted.item()
                     except:
@@ -333,14 +343,14 @@ class Finetuner(object):
         model_params = self.get_fine_tuning_parameters()
         
         if l2sp_lmda == 0:
-            optimizer = optim.SGD(
+            optimizer = torch.optim.SGD(
                 model_params, 
                 lr=lr,
                 momentum=args.momentum,
                 weight_decay=args.weight_decay,
             )
         else:
-            optimizer = optim.SGD(
+            optimizer = torch.optim.SGD(
                 model_params, 
                 lr=lr, 
                 momentum=args.momentum, 
@@ -352,23 +362,23 @@ class Finetuner(object):
         if args.const_lr:
             scheduler = None
         else:
-            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, 
                 end_iter,
             )
 
         teacher.eval()
-        ce = CrossEntropyLabelSmooth(train_loader.dataset.num_classes, args.label_smoothing).to(self.device)
+        ce = ops.CrossEntropyLabelSmooth(train_loader.dataset.num_classes, args.label_smoothing).to(self.device)
         featloss = torch.nn.MSELoss()
 
-        batch_time = MovingAverageMeter('Time', ':6.3f')
-        data_time = MovingAverageMeter('Data', ':6.3f')
-        ce_loss_meter = MovingAverageMeter('CE Loss', ':6.3f')
-        feat_loss_meter  = MovingAverageMeter('Feat. Loss', ':6.3f')
-        l2sp_loss_meter  = MovingAverageMeter('L2SP Loss', ':6.3f')
-        linear_loss_meter  = MovingAverageMeter('LinearL2 Loss', ':6.3f')
-        total_loss_meter  = MovingAverageMeter('Total Loss', ':6.3f')
-        top1_meter  = MovingAverageMeter('Acc@1', ':6.2f')
+        batch_time = metric.MovingAverageMeter('Time', ':6.3f')
+        data_time = metric.MovingAverageMeter('Data', ':6.3f')
+        ce_loss_meter = metric.MovingAverageMeter('CE Loss', ':6.3f')
+        feat_loss_meter  = metric.MovingAverageMeter('Feat. Loss', ':6.3f')
+        l2sp_loss_meter  = metric.MovingAverageMeter('L2SP Loss', ':6.3f')
+        linear_loss_meter  = metric.MovingAverageMeter('LinearL2 Loss', ':6.3f')
+        total_loss_meter  = metric.MovingAverageMeter('Total Loss', ':6.3f')
+        top1_meter  = metric.MovingAverageMeter('Acc@1', ':6.2f')
 
         train_path = osp.join(output_dir, "train.tsv")
         with open(train_path, 'w') as wf:
@@ -438,7 +448,7 @@ class Finetuner(object):
             batch_time.update(time.time() - end)
 
             if (i % args.print_freq == 0) or (i == iterations-1):
-                progress = ProgressMeter(
+                progress = metric.ProgressMeter(
                     iterations,
                     [batch_time, data_time, top1_meter, total_loss_meter, ce_loss_meter, feat_loss_meter, l2sp_loss_meter, linear_loss_meter],
                     prefix="LR: {:6.3f}\n".format(current_lr),

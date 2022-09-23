@@ -14,14 +14,11 @@ import datetime
 import torch
 import random
 import torch.nn.functional as F
-from attack import functional as FF
+from attack import ops as FF
 from torch import optim
 import benchmark
 from attack.finetuner import Finetuner
-from utils import metric
-
-from exp import vis as exp_F
-
+from utils import metric, vis as exp_F
 format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
 ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
@@ -54,7 +51,6 @@ class DeepRemoval(Finetuner):
     def save_torch_model(self, torch_model, step=0):
         if not osp.exists(self.torch_model_path):
             os.makedirs(self.torch_model_path)
-
         ckpt_path = osp.join(self.torch_model_path, f'final_ckpt_t{step}.pth')
         if step == 0:
             ckpt_path = osp.join(self.torch_model_path, f'final_ckpt.pth')
@@ -169,7 +165,7 @@ class DeepRemoval(Finetuner):
         return z_prime.detach()
 
     def model_poison(self):
-        """from Byzantine"""
+        """from Byzantine methods"""
         pass
 
     def maximize_deviation(self, teacher, student, x, logits):
@@ -202,8 +198,6 @@ class DeepRemoval(Finetuner):
         teacher = self.teacher
         student = self.model
 
-
-
         teacher.eval()
         teacher = teacher.to(self.args.device)
         student.train()
@@ -217,7 +211,7 @@ class DeepRemoval(Finetuner):
         T = args.temperature
         iterations = self.args.iterations + 1
 
-        lr = 5e-3
+        lr = 1e-3
         optimizer = optim.SGD(
             student.parameters(),
             lr=lr,
@@ -243,8 +237,8 @@ class DeepRemoval(Finetuner):
             # training process
             logit_t = teacher(x).detach()
             labels = logit_t.argmax(dim=1)
-            feats_prime = self.feature_poison(student, x=x, y=labels, layer_index=layer_index, ydist=args.ydist).detach()
-            logit_prime = self.gradient_poison(copy.deepcopy(student), x, ydist=args.ydist).detach()
+            #feats_prime = self.feature_poison(student, x=x, y=labels, layer_index=layer_index, ydist=args.ydist).detach()
+            logit_prime = self.gradient_poison(student, x, ydist=args.ydist).detach()
 
             student.train()
             teacher.eval()
@@ -253,32 +247,32 @@ class DeepRemoval(Finetuner):
             # maximize label-level deviation
             logit_s = student(x)
             loss_kd = FF.loss_kd(logit_s, labels, logit_prime, alpha=alpha, T=T)
+
             # maximize feature-level deviation
+            '''
             feats_z = student.mid_forward(x, layer_index=layer_index)
             loss_at = (lr * 1e4) * FF.loss_at(feats_prime, feats_z)
             loss = loss_kd + loss_at
+            '''
+
+            # maximize feature space deviation
+            layer_index = random.randint(2, 5)
+            z_s = student.mid_forward(x, layer_index=layer_index)
+            z_t = teacher.mid_forward(x, layer_index=layer_index).detach()
+            loss_at = FF.loss_at(z_s, z_t)
+            loss = loss_kd - (lr * 1e6) * loss_at
+
             loss.backward()
             optimizer.step()
-
-            '''
-            # maximize feature space deviation
-            z_s = student.mid_forward(x, layer_index=4)
-            z_t = teacher.mid_forward(x, layer_index=4).detach()
-            loss_at = FF.loss_at(z_s, z_t)
-            z_s = student.mid_forward(x, layer_index=5)
-            z_t = teacher.mid_forward(x, layer_index=5).detach()
-            loss_at += FF.loss_at(z_s, z_t)
-            loss = loss_kd - min(1e3 * loss_at, 2)
-            '''
             if scheduler is not None:
                 scheduler.step()
 
             # log preview && save model
-            print(f"-> train() step:{t} loss:{loss.item()} loss_at:{loss_at.item()} loss_kd:{loss_kd.item()}")
+            print(f"-> train() step:{t} layer_index:{layer_index} loss:{loss.item()} loss_at:{loss_at.item()} loss_kd:{loss_kd.item()}")
             if (t > 0) and ((t % args.test_interval == 0) or (t == iterations - 1)):
                 acc1, acc2 = exp_F.plot_logist_embedding(teacher, student, test_loader, out_root=self.output_dir, file_name=f"RemovalNet_{args.ydist}_{t}.pdf")
                 print(f"-> t:{t} teacher:{acc1}% student:{acc2}% loss:{loss.item()} loss_at:{loss_at.item()} loss_kd:{loss_kd.item()}")
-                self.save_torch_model(copy.deepcopy(student), step=t)
+                self.save_torch_model(student.cpu(), step=t)
 
             # testing & exp visualization
             _best_topk_acc, topk_acc, test_loss = metric.topk_test(student, test_loader, device=self.device, epoch=t, debug=True)
@@ -287,7 +281,7 @@ class DeepRemoval(Finetuner):
             learning_data["loss_at"].append(FF.numpy(loss_at))
             learning_data["loss_kd"].append(FF.numpy(loss_kd))
             exp_F.plot_learning_curve(learning_data, file_path=file_path)
-            self.save_torch_model(copy.deepcopy(student))
+            self.save_torch_model(student.cpu())
             print()
 
 
@@ -305,8 +299,7 @@ def get_args():
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-ydist", action="store", default="l2", type=str, choices=["l2", "cosine", "kl"], help="distance of adv logits")
 
-    parser.add_argument("-seed_method", action="store", default="PGD", type=str, choices=["FGSM", "PGD", "CW"], help="Type of blackbox generation")
-    parser.add_argument("-batch_size", action="store", default=200, type=int, help="GPU device id")
+    parser.add_argument("-batch_size", action="store", default=100, type=int, help="GPU device id")
     parser.add_argument("-seed", default=999, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = ROOT
@@ -329,8 +322,8 @@ def main():
     bench = benchmark.ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
     model1 = bench.get_model_wrapper(args.model1)
 
-    train_loader = loader.get_dataloader(model1.dataset_id, split="train")
-    test_loader = loader.get_dataloader(model1.dataset_id, split="test")
+    train_loader = loader.get_dataloader(model1.dataset_id, split="train", batch_size=args.batch_size)
+    test_loader = loader.get_dataloader(model1.dataset_id, split="test", batch_size=500)
 
     if "quantize" in str(model1):
         args.device = torch.device("cpu")

@@ -11,7 +11,9 @@ import numpy as np
 import torch
 import torchvision
 import logging
+from torchvision import transforms
 from . import inputx32, inputx64, inputx224
+from torchvision.datasets import CIFAR10
 from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data,  CUB200Data
 DATA_ROOT = osp.join(osp.abspath(osp.dirname(__file__)), "data")
 logger = logging.getLogger('DataLoader')
@@ -19,17 +21,19 @@ logger = logging.getLogger('DataLoader')
 
 def get_size(dataset_id):
     INPUT_SIZE = {
-        "MIT67": 224,
-        "SDog120": 224,
-        "Flower102": 224,
-        "Caltech257Data": 224,
-        "Stanford40Data": 224,
-        "CUB200Data": 224,
         "CIFAR10": 32,
         "CIFAR100": 32,
         "GSTB": 64,
+        "MIT67": 224,
+        "SDog120": 224,
+        "Flower102": 224,
+        "CUB200Data": 224,
+        "ImageNet": 224,
+        "Caltech257Data": 224,
+        "Stanford40Data": 224,
     }
     return INPUT_SIZE[dataset_id]
+
 
 def unnormalize(tensor, mean, std):
     tmp_tensor = tensor.clone()
@@ -50,13 +54,21 @@ def get_bounds(mean, std):
     return bounds
 
 
-def get_dataloader(dataset_id, split='train', batch_size=128, shuffle=True, shot=-1):
+def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot=-1):
+    """
+    Get dataloader.
+    :param dataset_id:
+    :param split:
+    :param batch_size:
+    :param shuffle:
+    :param shot:
+    :return:
+    """
     datapath = os.path.join(DATA_ROOT, dataset_id)
     assert os.path.exists(datapath)
 
     cfg = eval(f"inputx{get_size(dataset_id)}.cfg")
     normalize = torchvision.transforms.Normalize(mean=cfg.MEAN, std=cfg.STD)
-    from torchvision import transforms
     if split == 'train':
         dataset = eval(dataset_id)(
             datapath, True, transforms.Compose([
@@ -70,7 +82,7 @@ def get_dataloader(dataset_id, split='train', batch_size=128, shuffle=True, shot
     else:
         dataset = eval(dataset_id)(
             datapath, False, transforms.Compose([
-                transforms.Resize(256),
+                transforms.Resize(cfg.RESIZE_SIZE),
                 transforms.CenterCrop(cfg.INPUT_SIZE),
                 transforms.ToTensor(),
                 normalize,
@@ -83,7 +95,6 @@ def get_dataloader(dataset_id, split='train', batch_size=128, shuffle=True, shot
         batch_size=batch_size, shuffle=shuffle,
         num_workers=4, pin_memory=False
     )
-
     data_loader.dataset_id = dataset_id
     data_loader.mean = cfg.MEAN
     data_loader.std = cfg.STD
@@ -94,6 +105,42 @@ def get_dataloader(dataset_id, split='train', batch_size=128, shuffle=True, shot
     logger.info(f'-> get_dataloader success: {dataset_id}_{split}, iter_size:{len(data_loader)} num_classes:{data_loader.num_classes}')
     return data_loader
 
+
+def get_seed_samples(dataset_id, batch_size, rand=False, shuffle=True, with_label=False, unormalize=False):
+    """
+    Return only $batch_size samples from train set
+    :param dataset_id:
+    :param batch_size:
+    :param rand:
+    :param shuffle:
+    :param with_label:
+    :param unormalize:
+    :return:
+    """
+    datapath = os.path.join(DATA_ROOT, dataset_id)
+    assert os.path.exists(datapath)
+
+    cfg = eval(f"inputx{get_size(dataset_id)}.cfg")
+    if rand:
+        batch_input_size = (batch_size, * cfg.INPUT_SHAPE)
+        images = np.random.normal(size=batch_input_size).astype(np.float32)
+    else:
+        train_loader = get_dataloader(dataset_id=dataset_id, split='train', batch_size=batch_size, shuffle=shuffle)
+        images, labels = next(iter(train_loader))
+        unnormalize_images = train_loader.unnormalize(images).to('cpu').numpy()
+        images = images.to('cpu').numpy()
+        labels = labels.to('cpu').numpy()
+        bounds = train_loader.bounds
+        if not with_label:
+            if unormalize:
+                return images, unnormalize_images
+            return images
+        else:
+            if unormalize:
+                return images, unnormalize_images, bounds, labels
+            return images, labels
+    logger.info(f"-> get_seed_samples from:{dataset_id} of size:{batch_size}")
+    return images
 
 
 if __name__ == "__main__":

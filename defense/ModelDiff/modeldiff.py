@@ -9,8 +9,7 @@ import torch
 import numpy as np
 from scipy import spatial
 import torch.nn as nn
-from utils.tools import Utils
-from utils import helper
+from utils import helper, ops
 from defense import Fingerprinting
 format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
 ROOT = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -352,8 +351,8 @@ class ModelDiff(Fingerprinting):
     def compute_similarity_with_ddv(self, profiling_inputs):
         ddv1 = self.compute_ddv(self.model1, profiling_inputs)
         ddv2 = self.compute_ddv(self.model2, profiling_inputs)
-        ddv1 = Utils.normalize(np.array(ddv1))
-        ddv2 = Utils.normalize(np.array(ddv2))
+        ddv1 = ops.normalize(np.array(ddv1))
+        ddv2 = ops.normalize(np.array(ddv2))
         self.logger.debug(f'-> ddv1={ddv1}\n ddv2={ddv2}')
         ddv_distance = self.compare_ddv(ddv1, ddv2)
         model_similarity = 1 - ddv_distance
