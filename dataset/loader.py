@@ -5,6 +5,7 @@ __author__ = 'homeway'
 __copyright__ = 'Copyright © 2022/06/28, homeway'
 
 
+import argparse
 import os
 import os.path as osp
 import numpy as np
@@ -13,10 +14,36 @@ import torchvision
 import logging
 from torchvision import transforms
 from . import inputx32, inputx64, inputx224
-from torchvision.datasets import CIFAR10
-from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data,  CUB200Data
+from dataset.inputx32 import CIFAR10
+from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data, CUB200Data, ImageNet
 DATA_ROOT = osp.join(osp.abspath(osp.dirname(__file__)), "data")
 logger = logging.getLogger('DataLoader')
+
+task_list = {
+    "CV32": ["CIFAR10", "CIFAR100"],
+    "CV224": ["SDog120", "Flower102", "ImageNet"],
+    "AUDIO": [],
+}
+
+
+def load_cfg(dataset_id, arch_id=None):
+    return eval(f"inputx{get_size(dataset_id)}.cfg()")
+
+
+def get_num_classess(dataset_id):
+    NUM_CLASSES = {
+        "CIFAR10": 10,
+        "CIFAR100": 100,
+        "GSTB": 200,
+        "MIT67": 67,
+        "SDog120": 120,
+        "Flower102": 102,
+        "CUB200Data": 200,
+        "ImageNet": 1000,
+        "Caltech257Data": 256,
+        "Stanford40Data": 40,
+    }
+    return NUM_CLASSES[dataset_id]
 
 
 def get_size(dataset_id):
@@ -54,7 +81,7 @@ def get_bounds(mean, std):
     return bounds
 
 
-def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot=-1):
+def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shots=-1):
     """
     Get dataloader.
     :param dataset_id:
@@ -67,27 +94,28 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
     datapath = os.path.join(DATA_ROOT, dataset_id)
     assert os.path.exists(datapath)
 
-    cfg = eval(f"inputx{get_size(dataset_id)}.cfg")
-    normalize = torchvision.transforms.Normalize(mean=cfg.MEAN, std=cfg.STD)
+    cfg = load_cfg(dataset_id=dataset_id)
+    normalize = torchvision.transforms.Normalize(mean=cfg.mean, std=cfg.std)
     if split == 'train':
         dataset = eval(dataset_id)(
-            datapath, True, transforms.Compose([
-                transforms.RandomResizedCrop(cfg.INPUT_SIZE),
+            datapath, True, transform=transforms.Compose([
+                transforms.Resize(cfg.resize_size),
+                transforms.CenterCrop(cfg.input_size),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]),
-            shot, cfg.SEED, preload=False
+            shots=shots, seed=cfg.seed, preload=False
         )
     else:
         dataset = eval(dataset_id)(
-            datapath, False, transforms.Compose([
-                transforms.Resize(cfg.RESIZE_SIZE),
-                transforms.CenterCrop(cfg.INPUT_SIZE),
+            datapath, False, transform=transforms.Compose([
+                transforms.Resize(cfg.resize_size),
+                transforms.CenterCrop(cfg.input_size),
                 transforms.ToTensor(),
                 normalize,
             ]),
-            shot, cfg.SEED, preload=False
+            shots=shots, seed=cfg.seed, preload=False
         )
 
     data_loader = torch.utils.data.DataLoader(
@@ -96,11 +124,11 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
         num_workers=4, pin_memory=False
     )
     data_loader.dataset_id = dataset_id
-    data_loader.mean = cfg.MEAN
-    data_loader.std = cfg.STD
-    data_loader.input_size = cfg.INPUT_SIZE
+    data_loader.mean = cfg.mean
+    data_loader.std = cfg.std
+    data_loader.input_size = cfg.input_size
     data_loader.num_classes = dataset.num_classes
-    data_loader.bounds = get_bounds(cfg.MEAN, cfg.STD)
+    data_loader.bounds = get_bounds(cfg.mean, cfg.std)
     data_loader.unnormalize = unnormalize
     logger.info(f'-> get_dataloader success: {dataset_id}_{split}, iter_size:{len(data_loader)} num_classes:{data_loader.num_classes}')
     return data_loader
@@ -120,9 +148,9 @@ def get_seed_samples(dataset_id, batch_size, rand=False, shuffle=True, with_labe
     datapath = os.path.join(DATA_ROOT, dataset_id)
     assert os.path.exists(datapath)
 
-    cfg = eval(f"inputx{get_size(dataset_id)}.cfg")
+    cfg = load_cfg(dataset_id=dataset_id)
     if rand:
-        batch_input_size = (batch_size, * cfg.INPUT_SHAPE)
+        batch_input_size = (batch_size, * cfg.input_shape)
         images = np.random.normal(size=batch_input_size).astype(np.float32)
     else:
         train_loader = get_dataloader(dataset_id=dataset_id, split='train', batch_size=batch_size, shuffle=shuffle)

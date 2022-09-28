@@ -14,7 +14,6 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 def numpy(x):
     if torch.is_tensor(x):
         return x.detach().cpu().numpy()

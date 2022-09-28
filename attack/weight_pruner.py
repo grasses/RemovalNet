@@ -25,7 +25,7 @@ class WeightPruner(Finetuner):
         self.args = args
         self.device = args.device
         self.log_path = osp.join(self.args.output_dir, "prune.log")
-        self.logger = open(self.log_path, "w")
+        self.logger = open(self.log_path, "a")
         self.init_prune()
         self.logger.close()
 

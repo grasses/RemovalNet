@@ -18,22 +18,21 @@ class VGG(nn.Module):
         super(VGG, self).__init__()
 
         self.layer_list = features.keys()
-        self.num_feats = 512
+        self.num_feats = 25088
         for name, layer in features.items():
             setattr(self, name, layer)
 
         # CIFAR 10 (7, 7) to (1, 1)
         # self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
         self.fc = nn.Sequential(
-            nn.Linear(512 * 1 * 1, 4096),
-            # nn.Linear(512 * 7 * 7, 4096),
+            nn.Linear(512 * 7 * 7, 4096),
             nn.ReLU(True),
             nn.Dropout(),
             nn.Linear(4096, 4096),
             nn.ReLU(True),
             nn.Dropout(),
-            nn.Linear(4096, num_classes),
+            nn.Linear(4096, num_classes)
         )
 
         if init_weights:
@@ -252,13 +251,11 @@ def vgg19_bn(pretrained=False, progress=True, device="cpu", **kwargs):
 
 
 if __name__ == "__main__":
-    model = vgg19_bn()
+    model = vgg16_bn()
 
     from torchsummary import summary
-    summary(model, input_size=(3, 32, 32))
-
-    x = torch.randn(1, 3, 32, 32)
-
+    summary(model, input_size=(3, 224, 224))
+    x = torch.randn(1, 3, 224, 224)
     y, outs = model.feature_list(x)
     for out in outs:
         print(out.shape)

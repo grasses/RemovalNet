@@ -156,6 +156,7 @@ class ResNet(nn.Module):
             )
         self.groups = groups
         self.base_width = width_per_group
+        self.num_feats = 2048
 
         # CIFAR10: kernel_size 7 -> 3, stride 2 -> 1, padding 3->1
         self.conv1 = nn.Conv2d(
@@ -370,3 +371,11 @@ def resnet50(pretrained=False, progress=True, device="cpu", **kwargs):
     return _resnet(
         "resnet50", Bottleneck, [3, 4, 6, 3], pretrained, progress, device, **kwargs
     )
+
+
+if __name__ == "__main__":
+    model = resnet50()
+    x = torch.randn(1, 3, 32, 32)
+    y, outs = model.feature_list(x)
+    for out in outs:
+        print(out.shape)

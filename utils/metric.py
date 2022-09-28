@@ -5,27 +5,28 @@ __author__ = 'homeway'
 __copyright__ = 'Copyright © 2022/07/06, homeway'
 
 
+import os.path as osp
 import torch
 import torch.nn.functional as F
 
 
 _best_topk_acc = {
-    "top-1": 0,
-    "top-3": 0,
-    "top-5": 0,
+    "top1": 0,
+    "top3": 0,
+    "top5": 0,
 }
 def topk_test(model, test_loader, device, epoch=0, debug=False):
     global _best_topk_acc
     test_loss = 0.0
     correct = {
-        "top-1": 0,
-        "top-3": 0,
-        "top-5": 0,
+        "top1": 0,
+        "top3": 0,
+        "top5": 0,
     }
     topk_acc = {
-        "top-1": 0,
-        "top-3": 0,
-        "top-5": 0,
+        "top1": 0,
+        "top3": 0,
+        "top5": 0,
     }
     model.to(device)
     size = 0
@@ -36,25 +37,25 @@ def topk_test(model, test_loader, device, epoch=0, debug=False):
             loss = F.cross_entropy(logits, y)
             test_loss += loss.item()
             pred = logits.argmax(dim=1)
-            correct["top-1"] += torch.eq(y.view_as(pred), pred).sum().item()
+            correct["top1"] += torch.eq(y.view_as(pred), pred).sum().item()
             _, tk = torch.topk(logits, k=3, dim=1)
-            correct["top-3"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
+            correct["top3"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
             _, tk = torch.topk(logits, k=5, dim=1)
-            correct["top-5"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
+            correct["top5"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
             size += len(x)
     test_loss /= (1.0 * size)
-    topk_acc["top-1"] = round(100.0 * correct["top-1"] / size, 5)
-    topk_acc["top-3"] = round(100.0 * correct["top-3"] / size, 5)
-    topk_acc["top-5"] = round(100.0 * correct["top-5"] / size, 5)
+    topk_acc["top1"] = round(100.0 * correct["top1"] / size, 5)
+    topk_acc["top3"] = round(100.0 * correct["top3"] / size, 5)
+    topk_acc["top5"] = round(100.0 * correct["top5"] / size, 5)
     for k, v in topk_acc.items():
         if v > _best_topk_acc[k]:
             _best_topk_acc[k] = v
     msg = "-> For E{:d}, [Test] loss={:.5f}, top-1={:.3f}%, top-3={:.3f}%, top-5={:.3f}%".format(
             int(epoch),
             test_loss,
-            topk_acc["top-1"],
-            topk_acc["top-3"],
-            topk_acc["top-5"]
+            topk_acc["top1"],
+            topk_acc["top3"],
+            topk_acc["top5"]
     )
     if debug: print(msg)
     return _best_topk_acc, topk_acc, test_loss

@@ -11,7 +11,8 @@ import os.path as osp
 import numpy as np
 import torch
 from torch import nn
-from utils import metric
+import torch.nn.functional as F
+from utils import metric, helper
 from attack import ops
 
 
@@ -36,7 +37,6 @@ class Finetuner(object):
         if init_models:
             self.init_models()
 
-
     def init_models(self):
         args = self.args
         model = self.model
@@ -55,21 +55,19 @@ class Finetuner(object):
             if '5' in args.feat_layers:
                 reg_layers[4] = [model.layer5]
                 model.layer5.register_forward_hook(record_act)
+
         elif 'resnet' in args.network:
             reg_layers = {0: [model.layer1], 1: [model.layer2], 2: [model.layer3], 3: [model.layer4]}
             model.layer1.register_forward_hook(record_act)
             model.layer2.register_forward_hook(record_act)
             model.layer3.register_forward_hook(record_act)
             model.layer4.register_forward_hook(record_act)
+
         elif 'vgg' in args.network:
-            cnt = 0
-            reg_layers = {}
-            for name, module in model.named_modules():
-                if isinstance(module, nn.MaxPool2d) :
-                    reg_layers[name] = [module]
-                    module.register_forward_hook(record_act)
-                    print(name, module)
-        
+            reg_layers = {0: [model.layer3], 1: [model.layer4]}
+            model.layer3.register_forward_hook(record_act)
+            model.layer4.register_forward_hook(record_act)
+
         # Stored pre-trained weights for computing L2SP
         for m in model.modules():
             if hasattr(m, 'weight') and not hasattr(m, 'old_weight'):
@@ -92,57 +90,61 @@ class Finetuner(object):
             teacher.layer3.register_forward_hook(record_act)
             reg_layers[3].append(teacher.layer4)
             teacher.layer4.register_forward_hook(record_act)
-
             if '5' in args.feat_layers:
                 reg_layers[4].append(teacher.layer5)
                 teacher.layer5.register_forward_hook(record_act)
         else:
-            cnt = 0
-            for name, module in teacher.named_modules():
-                if isinstance(module, nn.MaxPool2d) :
-                    reg_layers[name].append(module)
-                    module.register_forward_hook(record_act)
-                    # print(name, module)
-
+            reg_layers[0].append(teacher.layer3)
+            teacher.layer3.register_forward_hook(record_act)
+            reg_layers[1].append(teacher.layer4)
+            teacher.layer4.register_forward_hook(record_act)
         self.reg_layers = reg_layers
-        # Check self.model
-        # st()
 
-    def compute_steal_loss(self, batch, label):
-        def CXE(predicted, target):
-            return -(target * torch.log(predicted)).sum(dim=1).mean()
-        model = self.model
-        teacher = self.teacher
+
+    def compute_steal_loss(self, batch, label, teacher_out):
+        """
+        Args:
+            batch:
+            label:
+            teacher_logits:
+        Returns: KD_loss = soft_loss + hard_loss
+        """
+        teacher_labels = teacher_out.argmax(dim=1)
+        out = self.model(batch)
+        _, pred = out.max(dim=1)
+
         alpha = self.args.steal_alpha
         T = self.args.temperature
-        
-        teacher_out = teacher(batch)
-        out = model(batch)
-        _, pred = out.max(dim=1)
-        
-        # _, teacher_pred = teacher_out.max(dim=1)
-        # KD_loss = F.cross_entropy(out, teacher_pred)
-        # soft_loss, hard_loss = 0, 0
-        
-        out = F.softmax(out, dim=1)
-        teacher_out = F.softmax(teacher_out, dim=1)
-        KD_loss = CXE(out, teacher_out)
-        soft_loss, hard_loss = 0, 0
-        
-        # soft_loss = nn.KLDivLoss()(
-        #     F.log_softmax(out/T, dim=1),
-        #     F.softmax(teacher_out/T, dim=1)
-        # ) * (alpha * T * T)
-        # hard_loss = F.cross_entropy(out, label) * (1. - alpha)
-        # KD_loss = soft_loss + hard_loss
-        
+        soft_loss = nn.KLDivLoss()(
+            F.log_softmax(out / T, dim=1),
+            F.softmax(teacher_out / T, dim=1)
+        ) * (alpha * T * T)
+        hard_loss = F.cross_entropy(out, teacher_labels) * (1. - alpha)
+        KD_loss = soft_loss + hard_loss
+
         top1 = float(pred.eq(label).sum().item()) / label.shape[0] * 100.
         return KD_loss, top1, soft_loss, hard_loss
 
-        
-    def compute_loss(self, batch, label, ce, featloss):
+
+    def compute_negative_loss(self, batch, label, ce):
+        # negative model: independent training
         model = self.model
         teacher = self.teacher
+        args = self.args
+        feat_loss, l2sp_loss = 0, 0
+        out = model(batch)
+        _, pred = out.max(dim=1)
+
+        top1 = float(pred.eq(label).sum().item()) / label.shape[0] * 100.
+        loss = 0.
+        loss += ce(out, label)
+        ce_loss = loss.item()
+        linear_loss = 0
+        total_loss = loss.item()
+        return loss, top1, ce_loss, feat_loss, linear_loss, l2sp_loss, total_loss
+        
+    def compute_loss(self, batch, label, ce, featloss, teacher_out):
+        model = self.model
         args = self.args
         l2sp_lmda = self.args.l2sp_lmda
         reg_layers = self.reg_layers
@@ -152,46 +154,31 @@ class Finetuner(object):
         _, pred = out.max(dim=1)
 
         top1 = float(pred.eq(label).sum().item()) / label.shape[0] * 100.
-        # top1_meter.update(float(pred.eq(label).sum().item()) / label.shape[0] * 100.)
 
         loss = 0.
         loss += ce(out, label)
-
         ce_loss = loss.item()
-        # ce_loss_meter.update(loss.item())
-
-        with torch.no_grad():
-            tout = teacher(batch)
 
         # Compute the feature distillation loss only when needed
         if args.feat_lmda != 0:
             regloss = 0
             for key in reg_layers.keys():
-                # key = int(layer)-1
-
                 src_x = reg_layers[key][0].out
                 tgt_x = reg_layers[key][1].out
                 regloss += featloss(src_x, tgt_x.detach())
-
             regloss = args.feat_lmda * regloss
             loss += regloss
             feat_loss = regloss.item()
-            # feat_loss_meter.update(regloss.item())
 
         beta_loss, linear_norm = ops.linear_l2(model, args.beta)
         loss = loss + beta_loss 
         linear_loss = beta_loss.item()
-        # linear_loss_meter.update(beta_loss.item())
 
         if l2sp_lmda != 0:
             reg, _ = ops.l2sp(model, l2sp_lmda)
             l2sp_loss = reg.item()
-            # l2sp_loss_meter.update(reg.item())
             loss = loss + reg
-
         total_loss = loss.item()
-        # total_loss_meter.update(loss.item())
-
         return loss, top1, ce_loss, feat_loss, linear_loss, l2sp_loss, total_loss
 
     def steal_test(self):
@@ -204,11 +191,9 @@ class Finetuner(object):
         with torch.no_grad():
             model.eval()
             teacher.eval()
-            
             total_soft, total_hard, total_kd = 0, 0, 0
             total = 0
             top1 = 0
-            
             for i, (batch, label) in enumerate(loader):
                 batch, label = batch.to(self.device), label.to(self.device)
                 total += batch.size(0)
@@ -228,7 +213,6 @@ class Finetuner(object):
                 total_hard += hard_loss.item()
                 total_kd += KD_loss.item()
                 top1 += int(pred.eq(label).sum().item())
-                
         return float(top1)/total*100, total_kd/(i+1), total_soft/(i+1), total_hard/(i+1)
         
     def test(self):
@@ -284,8 +268,8 @@ class Finetuner(object):
                     except:
                         pass
                 # break
-
         return float(top1)/total*100, total_ce/(i+1), np.sum(total_feat_reg)/(i+1), total_l2sp_reg/(i+1), total_feat_reg/(i+1)
+
 
     def get_fine_tuning_parameters(self):
         model = self.model
@@ -308,7 +292,6 @@ class Finetuner(object):
                 f.write(f"\n\nFinetuned layers:\n")
                 for name in all_names[-num_tune_params:]:
                     f.write(name+"\n")
-            
             return parameters
 
         if not ft_begin_module:
@@ -341,7 +324,6 @@ class Finetuner(object):
         args = self.args
 
         model_params = self.get_fine_tuning_parameters()
-        
         if l2sp_lmda == 0:
             optimizer = torch.optim.SGD(
                 model_params, 
@@ -356,9 +338,7 @@ class Finetuner(object):
                 momentum=args.momentum, 
                 weight_decay=0,
             )
-
         end_iter = iterations
-
         if args.const_lr:
             scheduler = None
         else:
@@ -370,7 +350,6 @@ class Finetuner(object):
         teacher.eval()
         ce = ops.CrossEntropyLabelSmooth(train_loader.dataset.num_classes, args.label_smoothing).to(self.device)
         featloss = torch.nn.MSELoss()
-
         batch_time = metric.MovingAverageMeter('Time', ':6.3f')
         data_time = metric.MovingAverageMeter('Data', ':6.3f')
         ce_loss_meter = metric.MovingAverageMeter('CE Loss', ':6.3f')
@@ -381,24 +360,22 @@ class Finetuner(object):
         top1_meter  = metric.MovingAverageMeter('Acc@1', ':6.2f')
 
         train_path = osp.join(output_dir, "train.tsv")
-        with open(train_path, 'w') as wf:
-            columns = ['time', 'iter', 'Acc', 'celoss', 'featloss', 'l2sp']
+        with open(train_path, 'a') as wf:
+            columns = ['time', 'seed', 'iter', 'Acc', 'celoss', 'featloss', 'l2sp']
             wf.write('\t'.join(columns) + '\n')
         test_path = osp.join(output_dir, "test.tsv")
-        with open(test_path, 'w') as wf:
-            columns = ['time', 'iter', 'Acc', 'celoss', 'featloss', 'l2sp']
+        with open(test_path, 'a') as wf:
+            columns = ['time', 'seed', 'iter', 'Acc', 'celoss', 'featloss', 'l2sp']
             wf.write('\t'.join(columns) + '\n')
         adv_path = osp.join(output_dir, "adv.tsv")
-        with open(adv_path, 'w') as wf:
-            columns = ['time', 'iter', 'Acc', 'AdvAcc', 'ASR']
+        with open(adv_path, 'a') as wf:
+            columns = ['time', 'seed', 'iter', 'Acc', 'AdvAcc', 'ASR']
             wf.write('\t'.join(columns) + '\n')
         
         dataloader_iterator = iter(train_loader)
         for i in range(iterations):
-
             model.train()
             optimizer.zero_grad()
-
             end = time.time()
             try:
                 batch, label = next(dataloader_iterator)
@@ -408,16 +385,23 @@ class Finetuner(object):
             batch, label = batch.to(self.device), label.to(self.device)
             data_time.update(time.time() - end)
 
+            with torch.no_grad():
+                teacher_out = self.teacher(batch)
             if args.steal:
-                loss, top1, soft_loss, hard_loss = self.compute_steal_loss(batch, label)
+                loss, top1, soft_loss, hard_loss = self.compute_steal_loss(batch, label, teacher_out=teacher_out)
                 total_loss = loss
                 ce_loss = hard_loss
                 feat_loss = soft_loss
                 linear_loss, l2sp_loss = 0, 0
+            elif args.negative:
+                loss, top1, ce_loss, feat_loss, linear_loss, l2sp_loss, total_loss = self.compute_negative_loss(
+                    batch, label, ce,
+                )
             else:
                 loss, top1, ce_loss, feat_loss, linear_loss, l2sp_loss, total_loss = self.compute_loss(
-                    batch, label, 
+                    batch, label,
                     ce, featloss,
+                    teacher_out
                 )
             top1_meter.update(top1)
             ce_loss_meter.update(ce_loss)
@@ -425,8 +409,8 @@ class Finetuner(object):
             linear_loss_meter.update(linear_loss)
             l2sp_loss_meter.update(l2sp_loss)
             total_loss_meter.update(total_loss)
-            
             loss.backward()
+
             #-----------------------------------------
             for k, m in enumerate(model.modules()):
                 # print(k, m)
@@ -438,6 +422,7 @@ class Finetuner(object):
                     weight_copy = m.weight.data.abs().clone()
                     mask = weight_copy.gt(0).float().to(self.device)
                     m.weight.grad.data.mul_(mask)
+
             #-----------------------------------------
             optimizer.step()
             for param_group in optimizer.param_groups:
@@ -446,12 +431,11 @@ class Finetuner(object):
                 scheduler.step()
 
             batch_time.update(time.time() - end)
-
             if (i % args.print_freq == 0) or (i == iterations-1):
                 progress = metric.ProgressMeter(
                     iterations,
                     [batch_time, data_time, top1_meter, total_loss_meter, ce_loss_meter, feat_loss_meter, l2sp_loss_meter, linear_loss_meter],
-                    prefix="LR: {:6.3f}\n".format(current_lr),
+                    prefix="\n-> {:s}_s{:d} LR={:6.4f}\n".format(args.task_str, args.seed, current_lr),
                     output_dir=output_dir,
                 )
                 progress.display(i)
@@ -474,15 +458,16 @@ class Finetuner(object):
                     )
                 
                 print(
-                    'Eval Train | Iteration {}/{} | Top-1: {:.2f} | CE Loss: {:.3f} | Feat Reg Loss: {:.6f} | L2SP Reg Loss: {:.3f}'.format(i+1, iterations, train_top1, train_ce_loss, train_feat_loss, train_weight_loss))
+                    'Eval Train | Iteration {}/{} | Top-1: {:.2f} | CE Loss: {:.3f} | Feat Reg Loss: {:.6f} | L2SP Reg Loss: {:.3f}'.format(i+1, iterations-1, train_top1, train_ce_loss, train_feat_loss, train_weight_loss))
                 print(
-                    'Eval Test | Iteration {}/{} | Top-1: {:.2f} | CE Loss: {:.3f} | Feat Reg Loss: {:.6f} | L2SP Reg Loss: {:.3f}'.format(i+1, iterations, test_top1, test_ce_loss, test_feat_loss, test_weight_loss))
+                    'Eval Test | Iteration {}/{} | Top-1: {:.2f} | CE Loss: {:.3f} | Feat Reg Loss: {:.6f} | L2SP Reg Loss: {:.3f}'.format(i+1, iterations-1, test_top1, test_ce_loss, test_feat_loss, test_weight_loss))
                 localtime = time.asctime( time.localtime(time.time()) )[4:-6]
                 with open(train_path, 'a') as af:
                     train_cols = [
                         localtime,
-                        i, 
-                        round(train_top1,2), 
+                        args.seed,
+                        i,
+                        round(train_top1,2),
                         round(train_ce_loss,2), 
                         round(train_feat_loss,2),
                         round(train_weight_loss,2),
@@ -491,7 +476,8 @@ class Finetuner(object):
                 with open(test_path, 'a') as af:
                     test_cols = [
                         localtime,
-                        i, 
+                        args.seed,
+                        i,
                         round(test_top1,2), 
                         round(test_ce_loss,2), 
                         round(test_feat_loss,2),
