@@ -2,89 +2,29 @@
 # -*- coding:utf-8 -*-
 
 __author__ = 'homeway'
-__copyright__ = 'Copyright © 2022/06/28, homeway'
+__copyright__ = 'Copyright © 2022/09/23, homeway'
 
-
-import os
-import argparse
-import logging
 import re
-import functools
-import copy
-import numpy as np
+import os
+import logging
 import torch
-import torch.nn as nn
-import torchvision
-import torchvision.models as models
-from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data,  CUB200Data
-from model.inputx224.fe_resnet import resnet18_dropout, resnet34_dropout, resnet50_dropout, resnet101_dropout
-from model.inputx224.fe_mobilenet import mbnetv2_dropout
-from model.inputx224.fe_resnet import feresnet18, feresnet34, feresnet50, feresnet101
-from model.inputx224.fe_mobilenet import fembnetv2
-from model.inputx224.fe_vgg16 import *
-
+import numpy as np
+from model import loader as mloader
+from dataset import loader as dloader
+from utils import helper, ops, metric
 from attack.finetuner import Finetuner
+from attack.trainer import Trainer
 from attack.weight_pruner import WeightPruner
-from utils import helper
-sys_args = helper.get_args()
-
-
-SEED = 98
-INPUT_SHAPE = (3, 224, 224)
-BATCH_SIZE = 64
-TRAIN_ITERS = 100000   
-DEFAULT_ITERS = 10000   
-TRANSFER_ITERS = DEFAULT_ITERS
-QUANTIZE_ITERS = DEFAULT_ITERS  # may be useless
-PRUNE_ITERS = DEFAULT_ITERS
-DISTILL_ITERS = DEFAULT_ITERS
-STEAL_ITERS = DEFAULT_ITERS
-CONTINUE_TRAIN = False  # whether to continue previous training
-args = helper.get_args()
-
-
-def lazy_property(func):
-    attribute = '_lazy_' + func.__name__
-    @property
-    @functools.wraps(func)
-    def wrapper(self):
-        if not hasattr(self, attribute):
-            setattr(self, attribute, func(self))
-        return getattr(self, attribute)
-    return wrapper
-
-
-def model_args():
-    parser = argparse.ArgumentParser(description="Build benchmark.")
-    parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
-    args, unknown = parser.parse_known_args()
-    args.const_lr = False
-    args.batch_size = BATCH_SIZE
-    args.lr = 5e-3
-    args.print_freq = 100
-    args.label_smoothing = 0
-    args.vgg_output_distill = False
-    args.reinit = False
-    args.l2sp_lmda = 0
-    args.train_all = False
-    args.ft_begin_module = None
-    args.momentum = 0
-    args.weight_decay = 1e-4
-    args.beta = 1e-2
-    args.feat_lmda = 0
-    args.iterations = 300
-    args.test_interval = 100
-    args.adv_test_interval = -1
-    args.feat_layers = '1234'
-    args.no_save = False
-    args.steal = False
-    args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else torch.device("cpu")
-    return args
+import pytz, datetime, argparse
+import os.path as osp
+curr_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
+ROOT = os.path.abspath(os.path.dirname(__file__))
+CONTINUE_TRAIN = False
 
 
 class ModelWrapper:
     def __init__(self, benchmark, teacher_wrapper, trans_str,
-                 arch_id=None, dataset_id=None, iters=100, fc=True):
+                 seed=1000, arch_id=None, dataset_id=None, iters=100, fc=True, **kwargs):
         self.logger = logging.getLogger('ModelWrapper')
         self.benchmark = benchmark
         self.teacher_wrapper = teacher_wrapper
@@ -94,6 +34,16 @@ class ModelWrapper:
         self.torch_model_path = os.path.join(benchmark.models_dir, f'{self.__str__()}')
         self.iters = iters
         self.fc = fc
+        self.seed = 1000 if (teacher_wrapper is None) else int(seed)
+        self.ckpt_path = os.path.join(self.torch_model_path, f'final_ckpt_s{seed}.pth')
+        helper.set_default_seed(self.seed)
+        self.cfg = dloader.load_cfg(self.dataset_id, self.arch_id)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+        if "quantize" in trans_str:
+            self.cfg.device = torch.device("cpu")
+
         assert self.arch_id is not None
         assert self.dataset_id is not None
 
@@ -101,124 +51,8 @@ class ModelWrapper:
         teacher_str = '' if self.teacher_wrapper is None else self.teacher_wrapper.__str__()
         return f'{teacher_str}{self.trans_str}-'
 
-    def __del__(self):
-        self.torch_model_on_cpu()
-
-    def name(self):
-        return self.__str__()
-
-    def torch_model_exists(self):
-        ckpt_path = os.path.join(self.torch_model_path, 'final_ckpt.pth')
-        return os.path.exists(ckpt_path)
-
-    def save_torch_model(self, torch_model):
-        if not os.path.exists(self.torch_model_path):
-            os.makedirs(self.torch_model_path)
-        ckpt_path = os.path.join(self.torch_model_path, 'final_ckpt.pth')
-        torch.save(
-            {'state_dict': torch_model.state_dict()},
-            ckpt_path,
-        )
-
-    @lazy_property
-    def torch_model(self):
-        """
-        load the model object from torch_model_path
-        :return: torch.nn.Module object
-        """
-        if self.dataset_id == 'ImageNet':
-            num_classes = 1000
-        else:
-            num_classes = self.benchmark.get_dataloader(self.dataset_id).dataset.num_classes
-        
-        if self.fc:
-            torch_model = eval(f'{self.arch_id}_dropout')(
-                pretrained=False,
-                num_classes=num_classes
-            )
-        else:
-            torch_model = eval(f'fe{self.arch_id}')(
-                pretrained=False,
-                num_classes=num_classes
-            )
-        m = re.match(r'(\S+)\((\S*)\)', self.trans_str)
-        method = m.group(1)
-        params = m.group(2).split(',')
-        if method == 'quantize':
-            dtype = params[0]
-            dtype = torch.qint8 if dtype == 'qint8' else torch.float16
-            torch_model = torch.quantization.quantize_dynamic(torch_model, dtype=dtype)
-        ckpt = torch.load(os.path.join(self.torch_model_path, 'final_ckpt.pth'), map_location="cpu")
-        torch_model.load_state_dict(ckpt['state_dict'])
-        return torch_model
-
-    def torch_model_on_cpu(self):
-        m = re.match(r'(\S+)\((\S*)\)', self.trans_str)
-        method = m.group(1)
-        try:
-            if method != "quantize":
-                return self.torch_model.cpu()
-        except Exception as e:
-            print(e)
-
-    @lazy_property
-    def torch_model_on_device(self):
-        m = re.match(r'(\S+)\((\S*)\)', self.trans_str)
-        method = m.group(1)
-        if method == "quantize":
-            return self.torch_model.to("cpu")
-        else:
-            print(f"-> model on device:{sys_args.device}")
-            return self.torch_model.to(sys_args.device)
-
-    def load_saved_weights(self, torch_model):
-        """
-        load weights in the latest checkpoint to torch_model
-        """
-        ckpt_path = os.path.join(self.torch_model_path, 'ckpt.pth')
-        if os.path.exists(ckpt_path):
-            ckpt = torch.load(ckpt_path, map_location="cpu")
-            torch_model.load_state_dict(ckpt['state_dict'])
-            self.logger.info('load_saved_weights: loaded a previous checkpoint')
-        else:
-            self.logger.info('load_saved_weights: no previous checkpoint found')
-        return torch_model
-
-    @lazy_property
-    def input_shape(self):
-        return INPUT_SHAPE
-
-    def get_test_loader(self, batch_size=200, shuffle=True):
-        dataset_id = 'MIT67' if self.dataset_id == 'ImageNet' else self.dataset_id
-
-        print(f"-> get_test_loader, {dataset_id}")
-
-        return self.benchmark.get_dataloader(dataset_id, split='test', batch_size=batch_size, shuffle=shuffle)
-
-    def get_seed_inputs(self, num, rand=False, shuffle=True, with_label=False, unormalize=False):
-        if rand:
-            batch_input_size = (num, *INPUT_SHAPE)
-            images = np.random.normal(size=batch_input_size).astype(np.float32)
-        else:
-            dataset_id = 'MIT67' if self.dataset_id == 'ImageNet' else self.dataset_id
-            train_loader = self.benchmark.get_dataloader(
-                dataset_id, split='train', batch_size=num, shuffle=shuffle)
-            images, labels = next(iter(train_loader))
-
-            unnormalize_images = train_loader.unnormalize(images).to('cpu').numpy()
-            images = images.to('cpu').numpy()
-            labels = labels.to('cpu').numpy()
-            bounds = train_loader.bounds
-
-            if not with_label:
-                if unormalize:
-                    return images, unnormalize_images
-                return images
-            else:
-                if unormalize:
-                    return images, unnormalize_images, bounds, labels
-                return images, labels
-        return images
+    def __call__(self, *args, **kwargs):
+        return self.torch_model(*args, **kwargs)
 
     def batch_forward(self, inputs):
         if isinstance(inputs, np.ndarray):
@@ -228,55 +62,103 @@ class ModelWrapper:
         if method == "quantize":
             inputs = inputs.to("cpu")
         else:
-            inputs = inputs.to(args.device)
+            inputs = inputs.to(self.cfg.device)
         self.torch_model_on_device.eval()
         with torch.no_grad():
             return self.torch_model_on_device(inputs)
 
-    def list_tensors(self):
-        pass
+    @helper.lazy_property
+    def torch_model_on_device(self):
+        m = re.match(r'(\S+)\((\S*)\)', self.trans_str)
+        method = m.group(1)
+        if method == "quantize":
+            return self.torch_model.to("cpu")
+        else:
+            print(f"-> model on device:{self.cfg.device}")
+            return self.torch_model.to(self.cfg.device)
 
-    def batch_forward_with_ir(self, inputs):
-        if isinstance(inputs, np.ndarray):
-            inputs = torch.from_numpy(inputs)
-        idx = 0
-        hook_handles = []
-        module_ir = {}
-        model = self.torch_model
+    def eval(self, torch_model):
+        topk_acc = {
+            "top1": 0,
+            "top3": 0,
+            "top5": 0
+        }
+        if self.dataset_id == "ImageNet": return topk_acc
+        test_loader = dloader.get_dataloader(self.dataset_id, split='test')
+        _, topk_acc, _ = metric.topk_test(torch_model, test_loader, epoch=0, debug=True, device=self.cfg.device)
+        return topk_acc
 
-        def register_hooks(module):
-            def hook(module, input, output):
-                global idx
-                class_name = str(module.__class__).split(".")[-1].split("'")[0]
-                module_name = f"{class_name}/{idx:03d}"
-                idx += 1
-                module_ir[module_name] = output.numpy()
+    def torch_model_exists(self, **kwargs):
+        return os.path.exists(self.ckpt_path)
 
-            if len(list(module.children())) == 0:
-                handle = module.register_forward_hook(hook)
-                hook_handles.append(handle)
+    def save_torch_model(self, torch_model, **kwargs):
+        if not os.path.exists(self.torch_model_path):
+            os.makedirs(self.torch_model_path)
+        topk_acc = self.eval(torch_model)
+        torch.save(
+            {
+                'top1_acc': topk_acc["top1"],
+                'top3_acc': topk_acc["top3"],
+                'top5_acc': topk_acc["top5"],
+                'iters': self.iters,
+                'seed': self.seed,
+                'state_dict': torch_model.state_dict()
+            },
+            self.ckpt_path,
+        )
 
-        def remove_hooks():
-            for h in hook_handles:
-                h.remove()
-
-        model.eval()
-        with torch.no_grad():
-            model.apply(register_hooks)
-            outputs = model(inputs)
-            remove_hooks()
-        return module_ir
-
-    def gen_model(self, regenerate=False):
+    def load_saved_weights(self, torch_model, **kwargs):
         """
-        generate the torch model
+        load weights in the latest checkpoint to torch_model
+        """
+        if os.path.exists(self.ckpt_path):
+            ckpt = torch.load(self.ckpt_path, map_location="cpu")
+            torch_model.load_state_dict(ckpt['state_dict'])
+            self.logger.info('load_saved_weights: loaded a previous checkpoint')
+        else:
+            self.logger.info('load_saved_weights: no previous checkpoint found')
+        return torch_model
+
+    def load_torch_model(self, **kwargs):
+        """
+        load the model object from torch_model_path
+        :return: torch.nn.Module object
+        """
+        torch_model = mloader.load_model(self.dataset_id, self.arch_id, pretrained=False)
+        m = re.match(r'(\S+)\((\S*)\)', self.trans_str)
+        method = m.group(1)
+        params = m.group(2).split(',')
+        if method == 'quantize':
+            dtype = params[0]
+            dtype = torch.qint8 if dtype == 'qint8' else torch.float16
+            torch_model = torch.quantization.quantize_dynamic(torch_model, dtype=dtype)
+        ckpt = torch.load(self.ckpt_path, map_location="cpu")
+        torch_model.load_state_dict(ckpt['state_dict'])
+        torch_model.seed = self.seed
+        torch_model.task = self.__str__()
+        torch_model.arch_id = self.arch_id
+        torch_model.dataset_id = self.dataset_id
+        return torch_model
+
+    @helper.lazy_property
+    def torch_model(self):
+        return self.load_torch_model
+
+    def gen_model(self, seed=1000, regenerate=False, **kwargs):
+        """
+        TODO: Rewrite this function!!!
+        generate the torch model, seed=1000 is the default seed of teacher model
         :return:
         """
+        self.seed = seed
+        helper.set_default_seed(self.seed)
         trans_str = self.trans_str
+
         if not regenerate and self.torch_model_exists():
-            self.logger.info(f'model already exists: {self.__str__()}')
+            self.logger.info(f'-> model already exists: {self.__str__()}')
             return
-        self.logger.info(f'generating model for: {self.__str__()}')
+
+        self.logger.info(f'-> generating model for: {self.__str__()}')
         m = re.match(r'(\S+)\((\S*)\)', trans_str)
         method = m.group(1)
         params = m.group(2).split(',')
@@ -289,162 +171,184 @@ class ModelWrapper:
 
         teacher_model = None
         if self.teacher_wrapper:
-            self.teacher_wrapper.gen_model()
-            teacher_model = self.teacher_wrapper.torch_model
-        train_loader = self.benchmark.get_dataloader(self.dataset_id, split='train')
-        test_loader = self.benchmark.get_dataloader(self.dataset_id, split='test')
+            self.teacher_wrapper.gen_model(seed=1000)
+            teacher_model = self.teacher_wrapper.load_torch_model()
+        train_loader = dloader.get_dataloader(self.dataset_id, split='train')
+        test_loader = dloader.get_dataloader(self.dataset_id, split='test')
 
-        args = model_args()
-        args.iterations = self.iters
-        args.output_dir = self.torch_model_path
-
+        cfg = dloader.load_cfg(self.dataset_id, self.arch_id)
+        cfg.iterations = self.iters
+        cfg.output_dir = self.torch_model_path
+        cfg.seed = self.seed
+        cfg.task_str = str(self.__str__() + f"_seed{cfg.seed}")
         if method == 'pretrain':
             # load pretrained model as specified by arch_id and save it to model path
             arch_id = params[0]
             dataset_id = params[1]
             if dataset_id != 'ImageNet':
                 self.logger.warning(f'gen_model: pretrained model on {dataset_id} not supported')
-            torch_model = eval(f'{arch_id}_dropout')(
-                pretrained=True,
-                num_classes=1000
+                exit(1)
+
+            torch_model = mloader.load_model(
+                dataset_id=dataset_id,
+                arch_id=arch_id,
+                pretrained=False,
+                pretrain="imagenet"
             )
             self.save_torch_model(torch_model)
+
         elif method == 'train':
             # train the model from scratch
             arch_id = params[0]
             dataset_id = params[1]
-            torch_model = eval(f'{arch_id}_dropout')(
-                pretrained=False,
-                num_classes=train_loader.dataset.num_classes
+            torch_model = mloader.load_model(
+                dataset_id=dataset_id,
+                arch_id=arch_id,
+                pretrained=False
             )
-            args.network = self.arch_id
-            args.ft_ratio = 1
-            args.reinit = True
-            args.lr = 1e-2
-            args.weight_decay = 5e-3
-            args.momentum = 0.9
-
+            cfg.network = self.arch_id
+            cfg.ft_ratio = 1
+            cfg.reinit = True
+            cfg.lr = 1e-2
+            cfg.weight_decay = 5e-3
+            cfg.momentum = 0.9
             if CONTINUE_TRAIN:
                 torch_model = self.load_saved_weights(torch_model)  # continue training
             finetuner = Finetuner(
-                args,
+                cfg,
                 torch_model, torch_model,
                 train_loader, test_loader,
+                init_models=False
             )
             finetuner.train()
             self.save_torch_model(torch_model)
-        elif method == 'transfer':
-            # transfer the teacher to a dataset as specified by dataset_id, fine-tune the last tune_ratio% layers
-            dataset_id = params[0]
-            tune_ratio = float(params[1])
-            student_model = eval(f'{self.arch_id}_dropout')(
-                pretrained=True,
-                num_classes=train_loader.dataset.num_classes
-            )
-            # FIXME copy state_dict from teacher to student, ignore the final layer
-            # student_model.load_state_dict(teacher_model.state_dict(), strict=False)
 
-            args.network = self.arch_id
-            args.ft_ratio = tune_ratio
-
-            if CONTINUE_TRAIN:
-                student_model = self.load_saved_weights(student_model)  # continue training
-            finetuner = Finetuner(
-                args,
-                student_model, teacher_model,
-                train_loader, test_loader,
-            )
-            finetuner.train()
-            self.save_torch_model(student_model)
         elif method == 'quantize':
+            # TODO: REWRITE
             dtype = params[0]
             dtype = torch.qint8 if dtype == 'qint8' else torch.float16
-            student_model = torch.quantization.quantize_dynamic(teacher_model, dtype=dtype)
-            self.save_torch_model(student_model)
+            student_model = mloader.load_model(dataset_id=self.dataset_id, arch_id=self.arch_id)
+            student_model.load_state_dict(teacher_model.state_dict(), strict=True)
+            student_model = torch.quantization.quantize_dynamic(student_model, dtype=dtype)
+            self.save_torch_model(student_model, seed=seed)
+
         elif method == 'prune':
             prune_ratio = float(params[0])
-            student_model = copy.deepcopy(teacher_model)
-
-            args.network = self.arch_id
-            args.method = "weight"
-            args.weight_ratio = prune_ratio
-
+            student_model = mloader.load_model(dataset_id=self.dataset_id, arch_id=self.arch_id)
+            student_model.load_state_dict(teacher_model.state_dict(), strict=True)
+            cfg.method = "weight"
+            cfg.network = self.arch_id
+            cfg.weight_ratio = prune_ratio
+            cfg.lr = 5e-3
+            if "resnet" in self.arch_id:
+                cfg.lr /= 5.0
             if CONTINUE_TRAIN:
                 student_model = self.load_saved_weights(student_model)  # continue training
-
             finetuner = WeightPruner(
-                args,
+                cfg,
                 student_model, teacher_model,
                 train_loader, test_loader,
             )
             finetuner.train()
-            self.save_torch_model(student_model)
+            self.save_torch_model(student_model, seed=seed)
             finetuner.final_check_param_num()
-        elif method == 'distill':
-            student_model = eval(f'{self.arch_id}_dropout')(
-                pretrained=False,
-                num_classes=train_loader.dataset.num_classes
-            )
-            args.network = self.arch_id
-            args.feat_lmda = 5e0
-            args.reinit = True
-            args.lr = 1e-2
-            args.weight_decay = 5e-3
-            args.momentum = 0.9
 
+        elif method == 'finetune':
+            dataset_id = params[0]
+            tune_ratio = float(params[1])
+            cfg.ft_ratio = tune_ratio
+            cfg.network = self.arch_id
+            if "resnet" in self.arch_id:
+                cfg.lr /= 5.0
+            student_model = mloader.load_model(dataset_id=dataset_id, arch_id=self.arch_id)
+            student_model.load_state_dict(teacher_model.state_dict(), strict=True)
             if CONTINUE_TRAIN:
                 student_model = self.load_saved_weights(student_model)  # continue training
-
             finetuner = Finetuner(
-                args,
+                cfg,
+                student_model, teacher_model,
+                train_loader, test_loader,
+                init_models=False
+            )
+            finetuner.train()
+            self.save_torch_model(student_model, seed=seed)
+
+        elif method == 'distill':
+            cfg.feat_lmda = 1
+            cfg.network = self.arch_id
+            cfg.weight_decay = 5e-3
+            cfg.momentum = 0.9
+            cfg.lr = 5e-3
+            if "resnet" in self.arch_id:
+                cfg.lr /= 5.0
+            cfg.retrain_linear = float(params[0])
+            student_model = mloader.load_model(
+                dataset_id=self.dataset_id,
+                arch_id=self.arch_id,
+                pretrained=False
+            )
+            student_model.load_state_dict(teacher_model.state_dict(), strict=True)
+            if CONTINUE_TRAIN:
+                student_model = self.load_saved_weights(student_model)  # continue training
+            finetuner = Finetuner(
+                cfg,
                 student_model, teacher_model,
                 train_loader, test_loader,
             )
             finetuner.train()
-            self.save_torch_model(student_model)
+            self.save_torch_model(student_model, seed=seed)
+
         elif method == 'steal':
             arch_id = params[0]
-            # use output distillation to transfer teacher knowledge to another architecture
-            student_model = eval(f'{arch_id}_dropout')(
-                pretrained=False,
-                num_classes=train_loader.dataset.num_classes
+            student_model = mloader.load_model(
+                dataset_id=self.dataset_id,
+                arch_id=self.arch_id,
+                pretrained=False
             )
-
-            args.network = arch_id
-            args.steal = True
-            args.reinit = True
-            args.steal_alpha = 1
-            args.temperature = 1
-            args.lr = 1e-2
-            args.weight_decay = 5e-3
-            args.momentum = 0.9
-
+            cfg.network = arch_id
+            cfg.steal = True
+            cfg.reinit = True
+            cfg.steal_alpha = 0.002
+            cfg.temperature = 10
+            cfg.weight_decay = 5e-3
+            cfg.momentum = 0.9
             if CONTINUE_TRAIN:
                 student_model = self.load_saved_weights(student_model)  # continue training
-                
             finetuner = Finetuner(
-                args,
+                cfg,
                 student_model, teacher_model,
                 train_loader, test_loader,
+                init_models=False
             )
             finetuner.train()
-            self.save_torch_model(student_model)
+            self.save_torch_model(student_model, seed=seed)
+
+        elif method == "negative":
+            arch_id = params[0]
+            # use output distillation to transfer teacher knowledge to another architecture
+            student_model = mloader.load_model(
+                dataset_id=self.dataset_id,
+                arch_id=self.arch_id,
+                pretrained=False
+            )
+            cfg.network = arch_id
+            cfg.negative = True
+            cfg.reinit = True
+            cfg.weight_decay = 5e-3
+            cfg.momentum = 0.9
+            cfg.backends = False
+            finetuner = Trainer(
+                cfg,
+                student_model, teacher_model,
+                train_loader, test_loader,
+                init_models=False
+            )
+            finetuner.train()
+            self.save_torch_model(student_model, seed=seed)
         else:
             raise RuntimeError(f'unknown transformation: {method}')
 
-    def transfer(self, dataset_id, tune_ratio=0.1, iters=TRANSFER_ITERS):
-        trans_str = f'transfer({dataset_id},{tune_ratio})'
-        # model_wrapper is the wrapper of the student model
-        model_wrapper = ModelWrapper(
-            benchmark=self.benchmark,
-            teacher_wrapper=self,
-            trans_str=trans_str,
-            dataset_id=dataset_id,
-            iters=iters
-        )
-        return model_wrapper
-
-    def quantize(self, dtype='qint8'):
+    def quantize(self, dtype='qint8', seed=1000, **kwargs):
         """
         do post-training quantization on the model
         :param dtype: qint8 or float16
@@ -454,203 +358,104 @@ class ModelWrapper:
         model_wrapper = ModelWrapper(
             benchmark=self.benchmark,
             teacher_wrapper=self,
-            trans_str=trans_str
+            trans_str=trans_str,
+            seed=seed,
+            **kwargs
         )
         return model_wrapper
 
-    def prune(self, prune_ratio=0.1, iters=PRUNE_ITERS):
+    def prune(self, prune_ratio=0.1, iters=10000, seed=1000, **kwargs):
         trans_str = f'prune({prune_ratio})'
         model_wrapper = ModelWrapper(
             benchmark=self.benchmark,
             teacher_wrapper=self,
             trans_str=trans_str,
-            iters=iters
+            iters=iters,
+            seed=seed,
+            **kwargs
         )
         return model_wrapper
 
-    def distill(self, iters=DISTILL_ITERS):
-        trans_str = f'distill()'
+    def finetune(self, dataset_id, tune_ratio=0.1, iters=10000, seed=1000, **kwargs):
+        trans_str = f'finetune({dataset_id},{tune_ratio})'
+        # model_wrapper is the wrapper of the student model
         model_wrapper = ModelWrapper(
             benchmark=self.benchmark,
             teacher_wrapper=self,
             trans_str=trans_str,
-            iters=iters
+            dataset_id=dataset_id,
+            iters=iters,
+            seed=seed,
+            **kwargs
         )
         return model_wrapper
 
-    def steal(self, arch_id, iters=STEAL_ITERS):
+    def distill(self, retrain_ratio, iters=10000, seed=1000, **kwargs):
+        trans_str = f'distill({retrain_ratio})'
+        model_wrapper = ModelWrapper(
+            benchmark=self.benchmark,
+            teacher_wrapper=self,
+            trans_str=trans_str,
+            iters=iters,
+            seed=seed,
+            **kwargs
+        )
+        return model_wrapper
+
+    def steal(self, arch_id, iters=10000, seed=1000, **kwargs):
         trans_str = f'steal({arch_id})'
         model_wrapper = ModelWrapper(
             benchmark=self.benchmark,
             teacher_wrapper=self,
             trans_str=trans_str,
             arch_id=arch_id,
-            iters=iters
+            iters=iters,
+            seed=seed,
+            **kwargs
         )
         return model_wrapper
 
-    def stealthnet(self, alpha, iter_size=5, ydist="l2", iters=PRUNE_ITERS):
-        trans_str = f'stealthnet({alpha},{iter_size},{ydist})'
+    def negative(self, arch_id, iters=10000, seed=1000, **kwargs):
+        trans_str = f'negative({arch_id})'
+        # init param & retrain the model using ground-truth label
         model_wrapper = ModelWrapper(
             benchmark=self.benchmark,
             teacher_wrapper=self,
             trans_str=trans_str,
-            iters=iters
+            arch_id=arch_id,
+            iters=iters,
+            seed=seed,
+            **kwargs
         )
         return model_wrapper
 
-    @lazy_property
-    def accuracy(self):
-        """
-        evaluate the model accuracy on the dataset
-        :return: a float number
-        """
-        # TODO implement this
-        model = self.torch_model.to(args.device)
-        test_loader = self.benchmark.get_dataloader(self.dataset_id, split='test')
-
-        with torch.no_grad():
-            model.eval()
-            total = 0
-            top1 = 0
-            for i, (batch, label) in enumerate(test_loader):
-                batch, label = batch.to(args.device), label.to(args.device)
-                total += batch.size(0)
-                out = model(batch)
-                _, pred = out.max(dim=1)
-                top1 += int(pred.eq(label).sum().item())
-        # print(top1, total)
-        return float(top1) / total * 100
+    def removalnet(self, dataset_id, iters=10000, seed=1000, **kwargs):
+        """TODO: RemovalNet, what to save as params"""
+        keyword = ""
+        for k in kwargs.keys():
+            keyword += f"{kwargs[k]},"
+        trans_str = f'removalnet({dataset_id},{keyword[:-1]})'
+        model_wrapper = ModelWrapper(
+            benchmark=self.benchmark,
+            teacher_wrapper=self,
+            trans_str=trans_str,
+            iters=iters,
+            seed=seed,
+            dataset_id=dataset_id,
+            **kwargs
+        )
+        return model_wrapper
 
 
 class ImageBenchmark:
-    def __init__(self, datasets_dir='data', models_dir='model/ckpt'):
+    def __init__(self, datasets=["CIFAR10"], archs=["resnet34", "vgg16_bn"], datasets_dir='dataset/data', models_dir='model/ckpt'):
         self.logger = logging.getLogger('ImageBench')
+        self.datasets = datasets
+        self.archs = archs
         self.datasets_dir = datasets_dir
         self.models_dir = models_dir
-        """
-        Available datasets are MIT67, Flower102, SDog120
-        Available models are mbnetv2, resnet18, resnet34, resnet50, vgg11_bn, vgg16_bn
-        """
-        # Used in the paper
-        self.datasets = ['Flower102', 'SDog120']
-        self.archs = ['mbnetv2', 'resnet18']
-        # Other archs
-        # self.datasets = ['MIT67', 'Flower102', 'SDog120']
-        # self.archs = ['mbnetv2', 'resnet18', 'vgg16_bn', 'vgg11_bn', 'resnet34', 'resnet50']
-        # For debug
-        # self.datasets = ['Flower102']
-        # self.archs = ['resnet18']
 
-
-    def get_model_wrapper(self, name, fc=True):
-        m = name.split("-")[:-1]
-        def extract(name):
-            gen_type = str(name.split("(")[0])
-            params = name.split("(")[1].split(")")[0].split(",")
-            return gen_type, params
-
-        gen_type, (arch_id, dataset_id) = extract(m[0])
-        if gen_type == "pretrain":
-            source_model = self.load_pretrained(arch_id, fc=fc)
-        elif gen_type == "train":
-            source_model = self.load_trained(arch_id, dataset_id=dataset_id, fc=fc)
-        else:
-            raise NotImplementedError(f"-> [ERROR] method:{gen_type} not found!")
-            exit(1)
-
-        target_model = source_model
-        for item in list(m[1:]):
-            gen_type, params = extract(item)
-            if gen_type == "transfer":
-                target_model = target_model.transfer(dataset_id=params[0], tune_ratio=params[1])
-            elif gen_type == "distill":
-                target_model = target_model.distill()
-            elif gen_type == "prune":
-                target_model = target_model.prune(params[0])
-            elif gen_type == "quantize":
-                target_model = target_model.quantize(params[0])
-            elif gen_type == "steal":
-                target_model = target_model.steal(params[0])
-            elif gen_type == "stealthnet":
-                target_model = target_model.stealthnet(params[0], params[1], params[2])
-            else:
-                raise NotImplementedError(f"-> [ERROR] method:{gen_type} not found!")
-                exit(1)
-        self.logger.info(f"-> load model: {target_model}")
-        return target_model
-
-    def get_dataloader(self, dataset_id, split='train', batch_size=BATCH_SIZE, shuffle=True, seed=SEED, shot=-1):
-        """
-        Get the torch Dataset object
-        :param dataset_id: the name of the dataset, should also be the dir name and the class name
-        :param split: train or test
-        :param batch_size: batch size
-        :param shot: number of training samples per class for the training dataset. -1 indicates using the full dataset
-        :return: torch.utils.data.DataLoader instance
-        """
-        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        def unnormalize(tensor, mean=mean, std=std):
-            tmp_tensor = tensor.clone()
-            for t, m, s in zip(tmp_tensor, mean, std):
-                (t.mul_(s).add_(m)).mul_(255.0)
-            return tmp_tensor.double()
-
-        def get_bounds(mean, std):
-            bounds = [-1, 1]
-            if type(mean) == type(list([])):
-                c = len(mean)
-                _min = (np.zeros([c]) - np.array(mean)) / np.array([std])
-                _max = (np.ones([c]) - np.array(mean)) / np.array([std])
-                bounds = [np.min(_min).item(), np.max(_max).item()]
-            elif type(mean) == float:
-                bounds = [(0.0 - mean) / std, (1.0 - mean) / std]
-            return bounds
-
-        datapath = os.path.join(self.datasets_dir, dataset_id)
-        if not os.path.exists(datapath):
-            print(f"-> dataset root: {datapath} not found!")
-            exit(1)
-        try:
-            normalize = torchvision.transforms.Normalize(mean=mean, std=std)
-            from torchvision import transforms
-            if split == 'train':
-                dataset = eval(dataset_id)(
-                    datapath, True, transforms.Compose([
-                        transforms.RandomResizedCrop(224),
-                        transforms.RandomHorizontalFlip(),
-                        transforms.ToTensor(),
-                        normalize,
-                    ]),
-                    shot, seed, preload=False
-                )
-            else:
-                dataset = eval(dataset_id)(
-                    datapath, False, transforms.Compose([
-                        transforms.Resize(256),
-                        transforms.CenterCrop(224),
-                        transforms.ToTensor(),
-                        normalize,
-                    ]),
-                    shot, seed, preload=False
-                )
-            data_loader = torch.utils.data.DataLoader(
-                dataset,
-                batch_size=batch_size, shuffle=shuffle,
-                num_workers=8, pin_memory=False
-            )
-            data_loader.num_classes = dataset.num_classes
-            data_loader.mean = mean
-            data_loader.std = std
-            data_loader.bounds = get_bounds(mean, std)
-            data_loader.unnormalize = unnormalize
-            self.logger.info(f'-> get_dataloader success: {dataset_id}')
-            return data_loader
-        except Exception as e:
-            self.logger.warning(f'-> get_dataloader failed: {e}')
-            exit(1)
-
-    def load_pretrained(self, arch_id, fc=True):
+    def load_pretrained(self, arch_id, seed=1000, fc=True):
         """
         Get the model pretrained on imagenet
         :param arch_id: the name of the arch
@@ -663,10 +468,11 @@ class ImageBenchmark:
             arch_id=arch_id,
             dataset_id='ImageNet',
             fc=fc,
+            seed=1000
         )
         return model_wrapper
 
-    def load_trained(self, arch_id, dataset_id, iters=TRAIN_ITERS, fc=True):
+    def load_trained(self, arch_id, dataset_id, seed=1000, iters=10000, fc=True):
         """
         Get the model with architecture arch_id trained on dataset dataset_id
         :param arch_id: the name of the arch
@@ -682,118 +488,205 @@ class ImageBenchmark:
             dataset_id=dataset_id,
             iters=iters,
             fc=fc,
+            seed=1000
         )
+        self.logger.info(f"-> load trained model:{str(model_wrapper)}")
         return model_wrapper
 
-    def list_models(self, fc=True):
+    def load_wrapper(self, name, seed=1000, fc=True, **kwargs):
+        """
+        Get model by name.
+        :param name:
+        :param fc:
+        :param kwargs:
+        :return:
+        """
+        m = name.split("-")[:-1]
+        def extract(name):
+            gen_type = str(name.split("(")[0])
+            params = name.split("(")[1].split(")")[0].split(",")
+            return gen_type, params
+
+        gen_type, (arch_id, dataset_id) = extract(m[0])
+        if gen_type == "pretrain":
+            source_model = self.load_pretrained(arch_id, fc=fc, seed=1000)
+        elif gen_type == "train":
+            source_model = self.load_trained(arch_id, dataset_id=dataset_id, fc=fc, seed=1000)
+        else:
+            raise NotImplementedError(f"-> [ERROR] method:{gen_type} not found!")
+
+        target_model = source_model
+        for item in list(m[1:]):
+            gen_type, params = extract(item)
+
+            if gen_type == "transfer":
+                target_model = target_model.transfer(dataset_id=params[0], tune_ratio=params[1], seed=seed, **kwargs)
+            elif gen_type == "finetune":
+                target_model = target_model.finetune(dataset_id=params[0], tune_ratio=params[1], seed=seed, **kwargs)
+            elif gen_type == "distill":
+                target_model = target_model.distill(tune_ratio=params[0], seed=seed, **kwargs)
+            elif gen_type == "prune":
+                target_model = target_model.prune(params[0], seed=seed, **kwargs)
+            elif gen_type == "quantize":
+                target_model = target_model.quantize(params[0], seed=seed, **kwargs)
+            elif gen_type == "steal":
+                target_model = target_model.steal(params[0], seed=seed, **kwargs)
+            elif gen_type == "negative":
+                target_model = target_model.negative(params[0], seed=seed, **kwargs)
+            elif gen_type == "removalnet":
+                target_model = target_model.removalnet(dataset_id=params[0], alpha=params[1], T=params[2], ydist=params[3], seed=seed, **kwargs)
+            else:
+                raise NotImplementedError(f"-> [ERROR] method:{gen_type} not found!")
+        self.logger.info(f"-> load model: {target_model}")
+        return target_model
+
+
+    def list_models(self, cfg, fc=True, methods=["negative", "finetune", "distill", "steal", "prune"]):
         """
         list the models in the benchmark dataset
         :return: a stream of ModelWrapper instances
         """
         source_models = []
         quantization_dtypes = ['qint8', 'float16']
-        prune_ratios = [0.2, 0.5, 0.8]
-        transfer_tune_ratios = [0.1, 0.5, 1]
+        prune_ratios = [0.8, 0.5, 0.2]
+        finetune_ratios = [0.2, 0.5, 0.8]
+        distill_ratios = [1.0]
+        seeds = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+        #seeds += [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
+        #seeds = [1700, 1800, 1900, 2000]
 
-        # load pretrained source models
-        for arch in self.archs:
-            source_model = self.load_pretrained(arch, fc=fc)
-            source_models.append(source_model)
-            yield source_model
-
-        # retrain models
-        retrain_models = []
+        # train source models
+        source_models = []
         for arch_id in self.archs:
             for dataset_id in self.datasets:
-                retrain_model = self.load_trained(arch_id, dataset_id, TRAIN_ITERS, fc=fc)
-                retrain_models.append(retrain_model)
-                yield retrain_model
+                source_model = self.load_trained(arch_id, dataset_id, iters=cfg.TRAIN_ITERS, seed=1000, fc=fc)
+                source_models.append(source_model)
+                yield source_model
 
-        # for debug
-        # prune_ratios = [0.2]
-        # transfer_tune_ratios = [0.5, 1]
+        if "negative" in methods:
+            # independent training, negative models
+            for source_model in source_models:
+                for seed in seeds:
+                    negative_model = source_model.negative(arch_id=arch_id, iters=cfg.NEGATIVE_ITERS, seed=seed)
+                    yield negative_model
 
-        transfer_models = []
-        # - M_{i,x}/{trans-y,l} -- Transfer M_{i,x} to D_y by fine-tuning from l-st layer
-        for source_model in source_models:
-            for dataset_id in self.datasets:
-                if dataset_id == source_model.dataset_id:
-                    continue
-                for tune_ratio in transfer_tune_ratios:
-                    transfer_model = source_model.transfer(dataset_id=dataset_id, tune_ratio=tune_ratio)
-                    transfer_models.append(transfer_model)
-                    yield transfer_model
+        if "finetune" in methods:
+            for retrain_model in source_models:
+                for ratio in finetune_ratios:
+                    for seed in seeds:
+                        yield retrain_model.finetune(dataset_id=dataset_id, iters=cfg.FINETUNING_ITERS, tune_ratio=ratio, seed=seed)
 
-        # - M_{i,x}/{prune-p} -- Prune M_{i,x} with pruning ratio = p
-        for transfer_model in transfer_models:
-            for pr in prune_ratios:
-                yield transfer_model.prune(prune_ratio=pr)
+        if "prune" in methods:
+            # - M_{i,x}/{prune-p} -- Prune M_{i,x} with pruning ratio = p
+            for retrain_model in source_models:
+                for pr in prune_ratios:
+                    for seed in seeds:
+                        yield retrain_model.prune(prune_ratio=pr, iters=cfg.PRUNE_ITERS, seed=seed)
 
-        # - M_{i,x}/{quant-qint8/float16} -- Compress M_{i,x} with integer / float16 quantization
-        for transfer_model in transfer_models:
-            for quantization_dtype in quantization_dtypes:
-                yield transfer_model.quantize(dtype=quantization_dtype)
+        if "quantize" in methods:
+            for retrain_model in source_models:
+                for quantization_dtype in quantization_dtypes:
+                    for seed in seeds:
+                        yield retrain_model.quantize(dtype=quantization_dtype, iters=cfg.QUANTIZE_ITERS, seed=seed)
 
-        # - M_{i,x}/{distill} -- Distill M_{i,x}
-        for transfer_model in transfer_models:
-            yield transfer_model.distill()
+        if "distill" in methods:
+            # - M_{i,x}/{distill} -- Distill M_{i,x}
+            for retrain_model in source_models:
+                for ratio in distill_ratios:
+                    for seed in seeds:
+                        yield retrain_model.distill(retrain_ratio=ratio, iters=cfg.DISTILL_ITERS, seed=seed)
 
-        # - M_{i,x}/{steal-j} -- Steal M_{i,x} to A_j
-        for transfer_model in transfer_models:
-            for arch_id in self.archs:
-                yield transfer_model.steal(arch_id=arch_id)
-
-        # variations of retrained models
-        # - M_{i,x}/{prune-p} -- Prune M_{i,x} with pruning ratio = p
-        for retrain_model in retrain_models:
-            for pr in prune_ratios:
-                yield retrain_model.prune(prune_ratio=pr)
-
-        # - M_{i,x}/{distill} -- Distill M_{i,x}
-        for retrain_model in retrain_models:
-            yield retrain_model.distill()
-
-        # - M_{i,x}/{steal-j} -- Steal M_{i,x} to A_j
-        for retrain_model in retrain_models:
-            for arch_id in self.archs:
-                yield retrain_model.steal(arch_id=arch_id)
+        if "steal" in methods:
+            # - M_{i,x}/{steal-j} -- Steal M_{i,x} to A_j
+            for retrain_model in source_models:
+                for arch_id in self.archs:
+                    for seed in seeds:
+                        yield retrain_model.steal(arch_id=arch_id, iters=cfg.STEAL_ITERS, seed=seed)
 
 
-def check_param_num(model, name):
-    total = sum([module.weight.nelement() for module in model.modules() if isinstance(module, nn.Conv2d) ])
-    num = total
-    for m in model.modules():
-        if ( isinstance(m, nn.Conv2d) ):
-            num -= int((m.weight.data == 0).sum())
-    ratio = (total - num) / total
-    log = f"===>{name}: Total {total}, current {num}, prune ratio {ratio:2f}"
-    print(log)
+def get_args():
+    parser = argparse.ArgumentParser(description="Build basic RemovalNet.")
+    parser.add_argument("-datasets_dir", required=False, action="store", dest="datasets_dir", default=osp.join(ROOT, "dataset/data"),
+                        help="Path to the dir of datasets.")
+    parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(ROOT, "model/ckpt"),
+                        help="Path to the dir of benchmark models.")
+    parser.add_argument("-mask", action="store", dest="mask", default="",
+                        help="The mask to filter the models to generate, split with +")
+    parser.add_argument("-phase", action="store", dest="phase", type=str, default="",
+                        help="The phase to run. Use a prefix to filter the phases.")
+    parser.add_argument("-regenerate", action="store_true", dest="regenerate", default=False,
+                        help="Whether to regenerate the models.")
+    parser.add_argument("-model1", action="store", dest="model1", default="pretrain(resnet18,ImageNet)-",
+                        required=False, help="model 1.")
+    parser.add_argument("-model2", action="store", dest="model2", default="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-",
+                        required=False, help="model 2.")
+    parser.add_argument("-tag", required=False, type=str, help="tag of script.")
+    parser.add_argument("-dataset", required=False, type=str, default="CIFAR10", help="model archtecture")
+    parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
+    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
+    args, unknown = parser.parse_known_args()
+    args.ROOT = ROOT
+    args.namespace = curr_time
+    args.out_root = osp.join(args.ROOT, "output")
+    args.logs_root = osp.join(args.ROOT, "logs")
+    args.modeldiff_root = osp.join(args.out_root, "modeldiff")
+    args.archs = {
+        "CIFAR10": ["vgg16_bn", "resnet34"],
+        "ImageNet": ["vgg16_bn", "resnet50"],
+    }
+    args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
+    helper.set_default_seed(seed=args.seed)
+    for path in [args.datasets_dir, args.models_dir, args.out_root, args.logs_root]:
+        if not osp.exists(path):
+            os.makedirs(path)
+    return args
 
 
-if __name__ == '__main__':
+def gen_model():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s")
-    args = helper.get_args()
-    helper.set_default_seed(args.seed)
+    logger = logging.getLogger("Benchmark")
 
-    bench = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
-    models_to_gen = []
-    mask_substrs = args.mask.strip().split('+')
-    for model_wrapper in bench.list_models():
-        # print(f'loaded model: {model_wrapper}')
-        model_str_tokens = model_wrapper.__str__().split('-')
-        if len(model_str_tokens) >= 2 and model_str_tokens[-2].startswith(args.phase):
-            to_gen = True
-            model_str = re.sub(r'[^A-Za-z0-9.]+', '_', model_wrapper.__str__())
-            for mask_substr in mask_substrs:
-                if not mask_substr:
-                    continue
-                if mask_substr not in f'_{model_str}_':
-                    to_gen = False
-                    break
-            if to_gen:
-                models_to_gen.append(model_wrapper)
-    models_to_gen_str = "\n".join([model_wrapper.__str__() for model_wrapper in models_to_gen])
-    print(f'{len(models_to_gen)} models to generate: \n{models_to_gen_str}')
-    for model_wrapper in models_to_gen:
-        model_wrapper.gen_model(regenerate=args.regenerate)
+    args = get_args()
+    print(f"-> Running with config:{args}")
+
+    dataset = args.dataset
+    cfg = dloader.load_cfg(dataset_id=dataset, arch_id="")
+
+    bench = ImageBenchmark(
+        archs=args.archs[dataset],
+        datasets=[dataset],
+        datasets_dir=args.datasets_dir,
+        models_dir=args.models_dir)
+    models = bench.list_models(cfg=cfg, methods=["distill"])
+    for idx, model in enumerate(models):
+        logger.info(f"-> idx:{idx} runing for model:{model} seed:{model.seed}")
+        model.gen_model(seed=model.seed)
+        print()
+
+
+if __name__ == "__main__":
+    gen_model()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

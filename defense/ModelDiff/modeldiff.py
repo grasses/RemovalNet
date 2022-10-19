@@ -17,20 +17,18 @@ ROOT = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__)
 
 class ModelDiff(Fingerprinting):
     MAX_VAL = 256
-    def __init__(self, model1, model2, out_root, device,
+    def __init__(self, model1, model2, test_loader, out_root, device, seed,
                  gen_inputs=None, input_metrics=None, compute_decision_dist=None,
                  compare_ddv=None, test_size=128):
         super().__init__(model1, model2, device=device, out_root=out_root)
-        if list(model1.input_shape) != list(model2.input_shape):
-            self.logger.warning('input shapes do not match')
-            exit(1)
 
         # init logger
+        self.seed = seed
         self.logger = logging.getLogger('ModelDiff')
         self.logger.info(f'-> comparing {model1} vs {model2}')
 
         self.test_size = test_size # =N in the paper
-        self.input_shape = model1.input_shape
+        self.test_loader = test_loader
 
         # init model
         self.arch1 = str(model1)
@@ -41,8 +39,7 @@ class ModelDiff(Fingerprinting):
         self.compare_ddv = compare_ddv if compare_ddv else ModelDiff._compare_ddv_cos
         self.fp_path = osp.join(self.fingerprint_root, f"{self.arch1}_{self.arch2}.pt")
 
-
-    def extract(self, rand=False, **kwargs):
+    def extract(self, **kwargs):
         """
         extract fingerprint samples.
         :return:
@@ -53,10 +50,7 @@ class ModelDiff(Fingerprinting):
             return torch.load(self.fp_path, map_location="cpu")["inputs"]
 
         self.logger.info(f'-> generating seed inputs')
-        seed_inputs = np.concatenate([
-            self.model1.get_seed_inputs(self.test_size, rand=rand),
-            self.model2.get_seed_inputs(self.test_size, rand=rand)
-        ])
+        seed_inputs, labels = next(iter(self.test_loader))
         np.random.shuffle(seed_inputs)
         seed_inputs = np.array(seed_inputs)
         seed_inputs = torch.from_numpy(seed_inputs)
@@ -72,15 +66,16 @@ class ModelDiff(Fingerprinting):
         input_metrics_2 = self.input_metrics(self.model2, profiling_inputs, use_torch=use_torch)
         self.logger.info(f'-> input metrics: model1={input_metrics_1} model2={input_metrics_2}')
 
-        self.logger.info("")
-        ddm_similarity = self.compute_similarity_with_ddm(profiling_inputs)
-        ddv_similarity = self.compute_similarity_with_ddv(profiling_inputs)
+        result = {}
+        result["ddm"] = self.compute_similarity_with_ddm(profiling_inputs)
+        result["ddv"] = self.compute_similarity_with_ddv(profiling_inputs)
         self.logger.info(
-            f'-> {self.model1} vs {self.model2} ddm_similarity={ddm_similarity} ddv_similarity={ddv_similarity}')
-        return ddm_similarity, ddv_similarity
+            f'-> {self.model1} vs {self.model2} ddm_similarity={result["ddm"]} ddv_similarity={result["ddv"]}')
+        return result
 
     def compare(self, **kwargs):
         return self.verify(self.extract(**kwargs))
+
 
     def none_optimized_compare(self, profiling_inputs, use_torch=True):
         self.logger.info(f'generating seed inputs')
@@ -476,7 +471,7 @@ class ModelDiff(Fingerprinting):
         input_shape = seed_inputs[0].shape
         n_inputs = seed_inputs.shape[0]
         max_iterations = 1000
-        model1 = self.model1
+        model1 = self.model1()
         model2 = self.model2
         ndims = np.prod(input_shape)
 
@@ -695,14 +690,19 @@ def multiple_pairs(args, benchmark, logger):
 
 
 def single_pairs(args, benchmark, logger):
-    model1 = benchmark.get_model_wrapper(args.model1)
-    model2 = benchmark.get_model_wrapper(args.model2)
+    from dataset import loader as dloader
+    model1 = benchmark.load_wrapper(args.model1, seed=1000)
+    model2 = benchmark.load_wrapper(args.model2, seed=args.seed)
 
     if "quantize" in str(model1) or "quantize" in str(model2):
         args.device = torch.device("cpu")
-    modeldiff = ModelDiff(model1, model2, device=args.device, out_root=args.modeldiff_root)
+    test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id)
+
+    modeldiff = ModelDiff(model1, model2, test_loader=test_loader, device=args.device, out_root=args.modeldiff_root, seed=args.seed)
     similarity = modeldiff.compare()
     logger.info(f'-> the similarity is {similarity}')
+
+
 
 
 def main(args):

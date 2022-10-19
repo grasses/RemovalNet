@@ -16,33 +16,32 @@ from benchmark import ImageBenchmark
 from defense import Fingerprinting
 from lime.wrappers.scikit_image import SegmentationAlgorithm
 from utils import helper
-sys_args = helper.get_args()
+from . import ops
 
 
 class ZEST(Fingerprinting):
-    def __init__(self, model1, model2, out_root, device,
-                 gen_inputs=None, input_metrics=None, compute_decision_dist=None, seed_size=128):
+    def __init__(self, model1, model2, test_loader, device, out_root, orders=['1', '2', 'inf', 'cosine']):
         super().__init__(model1, model2, out_root=out_root, device=device)
-        self.logger = logging.getLogger("Zest")
-        self.logger.info(f'-> comparing {model1} and {model2}')
-        self.logger.debug(f'-> initialize comparison: {self.model1} {self.model2}')
-        self.logger.debug(f'-> input shapes: {self.model1.input_shape} {self.model2.input_shape}')
+        self.logger = logging.getLogger("ZEST")
+        self.logger.info(f'-> comparing {model1.task} and {model2.task}')
+
+        self.task1 = model1.task
+        self.task2 = model2.task
         self.model1 = model1
         self.model2 = model2
-        self.seed_size = seed_size
+        self.seed_size = test_loader.batch_size
+        self.test_loader = test_loader
+        self.orders = orders
         if not osp.exists(out_root):
             os.makedirs(out_root)
         self.out_root = out_root
 
-    def extract(self, **kwargs):
-        pass
-
-    def verify(self, **kwargs):
-        pass
-
-    def compare(self, use_torch=True, cache=True):
-        path = osp.join(self.out_root, f"lime_{self.model1}_{self.model2}.pt")
-        if not osp.exists(path):
+    def extract(self, cache=True, **kwargs):
+        path = osp.join(self.fingerprint_root, f"{self.model1.task}_{self.model2.task}.pt")
+        if cache and osp.exists(path):
+            fingerprint = torch.load(path, map_location="cpu")
+            self.logger.info(f"-> load cache from: {path}")
+        else:
             self.logger.info(f'-> [compare] step1: generating lime_data')
             ref_data, unnormalize_ref_data = self.compute_seed_samples()
             self.logger.info(f'-> [compare] step2: generating lime_segment, ref_data={ref_data.shape}')
@@ -52,24 +51,29 @@ class ZEST(Fingerprinting):
             self.logger.info(f'-> [compare] step4: training lime model')
             lime_mask1 = self.compute_lime_signature(self.model1, ref_dataset, lime_dataset)
             lime_mask2 = self.compute_lime_signature(self.model2, ref_dataset, lime_dataset)
-            cache_data = {
+            fingerprint = {
                 "ref_data": ref_data,
                 "lime_mask1": lime_mask1,
                 "lime_mask2": lime_mask2
             }
-            if cache:
-                torch.save(cache_data, path)
-                print(f"-> save cache to: {path}")
-        else:
-            cache_data = torch.load(path)
-            print(f"-> load cache from: {path}")
-        dist = self.compute_parameter_distance(cache_data["lime_mask1"], cache_data["lime_mask2"], lime=True)
+            self.logger.info(f"-> save cache to: {path}")
+        torch.save(fingerprint, path)
+        return fingerprint
+
+    def verify(self, fingerprint, **kwargs):
+        dist = self.compute_parameter_distance(fingerprint["lime_mask1"], fingerprint["lime_mask2"], lime=True)
         self.logger.info(f"-> Zest dist: {dist}")
         return dist
 
-    def compute_seed_samples(self, rand=False):
-        # Zest 原论文只有一个数据集
-        images, unnormalize_images, bounds, labels = self.model1.get_seed_inputs(self.seed_size, rand=rand, unormalize=True)
+    def compare(self, **kwargs):
+        return self.verify(self.extract(**kwargs))
+
+    def compute_seed_samples(self):
+        images, labels = next(iter(self.test_loader))
+        mean = self.test_loader.mean
+        std = self.test_loader.std
+        unnormalize_images = self.test_loader.unnormalize(images, mean=mean, std=std).to('cpu').numpy()
+        images = images.to('cpu').numpy()
         return images, unnormalize_images
 
     def get_lime_segment(self, ref_data):
@@ -119,46 +123,50 @@ class ZEST(Fingerprinting):
         return np.stack(sub_dataset)
 
     def compute_lime_signature(self, model, ref_dataset, lime_dataset, cat=True):
-        print(f"-> compute_lime_signature")
+        self.logger.info(f"-> compute_lime_signature")
         datasets = []
+        model.to(self.device)
         with torch.no_grad():
-            for i in range(len(lime_dataset)):
+            phar = tqdm(range(len(lime_dataset)))
+            for i in phar:
                 lime_data = lime_dataset[i]
                 data = ref_dataset[i]
                 inputs = torch.from_numpy(data).permute(0, 3, 1, 2).float()
-                outputs = model.batch_forward(inputs).detach().cpu().numpy()
+                outputs = ops.batch_forward(model, inputs, argmax=False).detach().cpu().numpy()
                 datasets.append([lime_data, outputs])
+                phar.set_description(f"-> [{i}/{len(lime_dataset)}] step4: compute_lime_signature...")
         weights = []
         with torch.no_grad():
             for data, label in datasets:
-                data, label = torch.from_numpy(data).float().to(sys_args.device), torch.from_numpy(label).float().to(sys_args.device)
-                w = torch.chain_matmul(torch.pinverse(torch.matmul(data.T, data)), data.T, label)
+                data, label = torch.from_numpy(data).float().to(self.device), torch.from_numpy(label).float().to(self.device)
+                w = torch.chain_matmul(torch.pinverse(torch.matmul(data.T, data)), data.T, label).to("cpu")
                 weights.append(w)
         if cat:
             return torch.cat(weights)
         else:
             return weights.to("cpu")
 
-    def compute_parameter_distance(self, lime_mask1, lime_mask2, order=['1', '2', 'inf', 'cos'], half=False, linear=False, lime=False):
-        print(f"-> compute_parameter_distance...")
+    def compute_parameter_distance(self, lime_mask1, lime_mask2, half=False, linear=False, lime=False):
+        self.logger.info(f"-> compute_parameter_distance...")
         weights1 = self.__consistent_type(lime_mask1, architecture=None, half=half, linear=linear, lime=lime)
         weights2 = self.__consistent_type(lime_mask2, architecture=None, half=half, linear=linear, lime=lime)
-        if not isinstance(order, list):
-            orders = [order]
+        if not isinstance(self.orders, list):
+            orders = [self.orders]
         else:
-            orders = order
-        res_list = []
+            orders = self.orders
+        res_list = {}
         if lime:
             temp_w1 = copy.copy(weights1)
             temp_w2 = copy.copy(weights2)
+
         for o in orders:
             if lime:
                 weights1, weights2 = self.__lime_align(temp_w1, temp_w2, o)
             res = self.__compute_distance(weights1, weights2, o)
             if isinstance(res, np.ndarray):
                 res = float(res)
-            res_list.append(res)
-        return np.array(res_list)
+            res_list[o] = res
+        return res_list
 
     def __compute_distance(self, a, b, order):
         if order == 'inf':
@@ -223,20 +231,22 @@ class ZEST(Fingerprinting):
                 weights = weights.type(torch.IntTensor).type(torch.FloatTensor)
             else:
                 weights = weights.half()
-        return weights.to(sys_args.device)
+        return weights.to(self.device)
 
 
 def main(args):
+    from dataset import loader as dloader
     filename = str(osp.basename(__file__)).split(".")[0]
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
-                        filename=f"{args.logs_root}/{filename}_{args.namespace}.txt")
+                        ) #filename=f"{args.logs_root}/{filename}_{args.namespace}.txt")
 
     benchmark = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
-    model1 = benchmark.get_model_wrapper(args.model1)
-    model2 = benchmark.get_model_wrapper(args.model2)
+    model1 = benchmark.load_wrapper(args.model1, seed=1000).load_torch_model(seed=1000)
+    model2 = benchmark.load_wrapper(args.model2, seed=args.seed).load_torch_model(seed=args.seed)
+    test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id, split="test", batch_size=128)
 
-    comparison = Zest(model1, model2, out_root=args.zest_root, device=args.device)
+    comparison = ZEST(model1, model2, test_loader=test_loader, out_root=args.zest_root, device=args.device)
     dist = comparison.compare()
     print(f"-> ZEST dist: {dist}")
 

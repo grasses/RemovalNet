@@ -2,31 +2,12 @@
 # -*- coding:utf-8 -*-
 
 __author__ = 'homeway'
-__copyright__ = 'Copyright © 2022/09/23, homeway'
+__copyright__ = 'Copyright © 2022/08/24, homeway'
 
-"""system DNN tools"""
-
-import math
-import numpy as np
 import torch
+import math
 import random
-
-
-def set_default_seed(seed=999):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # multi-GPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
-def normalize(v):
-    norm = np.linalg.norm(v)
-    if norm == 0:
-        return v
-    return v / norm
+import numpy as np
 
 
 def batch_forward(model, x, batch_size=200, argmax=False):

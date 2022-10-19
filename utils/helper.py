@@ -138,12 +138,12 @@ def get_args():
     parser.add_argument("-regenerate", action="store_true", dest="regenerate", default=False,
                         help="Whether to regenerate the models.")
     parser.add_argument("-model1", action="store", dest="model1", default="pretrain(resnet18,ImageNet)-",
-                        required=True, help="model 1.")
+                        required=False, help="model 1.")
     parser.add_argument("-model2", action="store", dest="model2", default="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-",
-                        required=True, help="model 2.")
+                        required=False, help="model 2.")
     parser.add_argument("-tag", required=False, type=str, help="tag of script.")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=1024, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = ROOT
     args.namespace = curr_time

@@ -15,8 +15,8 @@ cache_root = osp.join(ROOT, "cache")
 
 
 class BaseSeeding:
-    def __init__(self, model, arch, test_loader, dataset, out_root):
-        self.arch = arch
+    def __init__(self, model, task, test_loader, dataset, out_root):
+        self.task = task
         self.model = model
         self.dataset = dataset
         self.test_loader = test_loader
@@ -25,7 +25,7 @@ class BaseSeeding:
         self.out_root = out_root
 
     def load_test_samples(self, tag=""):
-        fpath = osp.join(self.out_root, f"{self.dataset}_{self.arch}_{tag}.pt")
+        fpath = osp.join(self.out_root, f"{self.dataset}_{self.task}_{tag}.pt")
         if osp.exists(fpath):
             self.logger.info(f"-> load test samples from: {fpath}")
             return torch.load(fpath, map_location="cpu")
@@ -38,7 +38,7 @@ class BaseSeeding:
             "seed_x": seed_x,
             "seed_y": seed_y
         }
-        fpath = osp.join(self.out_root, f"{self.dataset}_{self.arch}_{tag}.pt")
+        fpath = osp.join(self.out_root, f"{self.dataset}_{self.task}_{tag}.pt")
         self.logger.info(f"-> save test samples to:{fpath}")
         return torch.save(data, fpath)
 
@@ -46,8 +46,16 @@ class BaseSeeding:
         self.logger.info(f"-> generate base seed samples...")
         seed_x, seed_y, pred_list = [], [], []
 
+        loader = iter(self.test_loader)
+        steps = min(len(loader), 100)
         with torch.no_grad():
-            for step, (x, y) in enumerate(self.test_loader):
+            for step in range(steps):
+                try:
+                    x, y = next(loader)
+                except Exception as e:
+                    loader = iter(self.test_loader)
+                    x, y = next(loader)
+
                 x = x.to(self.device)
                 pred = self.model(x).cpu().detach()
                 true_idx = torch.where(y == pred.argmax(dim=1))[0]

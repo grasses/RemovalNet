@@ -14,9 +14,9 @@ from . import BaseSeeding
 
 class BlackboxSeeding(Attack, BaseSeeding):
     """code from: https://github.com/Harry24k/adversarial-attacks-pytorch"""
-    def __init__(self, model, arch, test_loader, dataset, batch_size, out_root):
+    def __init__(self, model, task, test_loader, dataset, batch_size, out_root):
         Attack.__init__(self, "BlackboxSeeding", model)
-        BaseSeeding.__init__(self, model, arch, test_loader, dataset, out_root)
+        BaseSeeding.__init__(self, model, task, test_loader, dataset, out_root)
         self.batch_size = batch_size
         self.bounds = test_loader.bounds
         self._supported_mode = ['default', 'targeted']

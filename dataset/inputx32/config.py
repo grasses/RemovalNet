@@ -16,7 +16,7 @@ def load_cfg():
     args, unknown = parser.parse_known_args()
     args.seed = 1000
     args.lr = 1e-2
-    args.print_freq = 50
+    args.print_freq = 200
     args.label_smoothing = 0
     args.const_lr = False
     args.backends = False
@@ -29,7 +29,7 @@ def load_cfg():
     args.weight_decay = 1e-4
     args.beta = 1e-2
     args.feat_lmda = 0
-    args.test_interval = 100
+    args.test_interval = 1000
     args.adv_test_interval = -1
     args.feat_layers = '1234'
     args.no_save = False
@@ -42,12 +42,13 @@ def load_cfg():
     args.resize_size = 32
     args.batch_size = 200
 
-    args.TRAIN_ITERS = 30000
-    args.QUANTIZE_ITERS = 500
-    args.PRUNE_ITERS = 500
+    args.TRAIN_ITERS = 10000
+    args.NEGATIVE_ITERS = 10000
     args.DISTILL_ITERS = 10000
     args.STEAL_ITERS = 10000
-    args.FINETUNING_ITERS = 10000
+    args.QUANTIZE_ITERS = 1000
+    args.PRUNE_ITERS = 1000
+    args.FINETUNING_ITERS = 1000
     args.CONTINUE_TRAIN = False
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else torch.device("cpu")
     return args

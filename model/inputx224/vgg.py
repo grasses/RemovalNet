@@ -14,7 +14,7 @@ ROOT = os.path.abspath(osp.join(osp.dirname(os.getcwd()), "ckpt"))
 
 
 class VGG(nn.Module):
-    def __init__(self, features, num_classes=10, init_weights=True):
+    def __init__(self, features, num_classes=1000, init_weights=True):
         super(VGG, self).__init__()
 
         self.layer_list = features.keys()

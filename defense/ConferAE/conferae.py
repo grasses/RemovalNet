@@ -16,12 +16,10 @@ import argparse
 import os, datetime, pytz
 import os.path as osp
 import logging
-import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from . import ops, cfg, Trainer
-from model.inputx224 import torchvision_models
 from defense import Fingerprinting
 format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
 ROOT = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))

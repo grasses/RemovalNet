@@ -12,8 +12,12 @@ logger = logging.getLogger("ModelLoader")
 
 def load_model(dataset_id, arch_id, pretrained=False, pretrain=None, **kwargs):
     if pretrain is not None:
-        from model.inputx224 import torchvision_models
-        torch_model = eval(f"torchvision_models.{arch_id}(num_classes=1000), pretrained='imagenet'")
+        if "vit" not in arch_id:
+            from model.inputx224 import torchvision_models
+            torch_model = eval(f"torchvision_models.{arch_id}(num_classes=1000, pretrained='imagenet')")
+        else:
+            from model.inputx224 import vit
+            torch_model = eval(f"vit.{arch_id}(num_classes=1000, pretrained=True)")
         return torch_model
 
     num_classes = dloader.get_num_classess(dataset_id)
@@ -23,6 +27,8 @@ def load_model(dataset_id, arch_id, pretrained=False, pretrain=None, **kwargs):
 
     elif dataset_id in dloader.task_list["CV224"]:
         from model.inputx224 import vgg19_bn, vgg13_bn, vgg11_bn, vgg16_bn
+        from model.inputx224 import resnet50
+        #from model.inputx224.vit import *
     else:
         raise NotImplementedError()
 

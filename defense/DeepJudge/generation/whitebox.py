@@ -13,8 +13,8 @@ from . import BaseSeeding
 
 
 class WhiteboxSeeding(BaseSeeding):
-    def __init__(self, model, arch, test_loader, dataset, batch_size, out_root):
-        BaseSeeding.__init__(self, model, arch, test_loader, dataset, out_root)
+    def __init__(self, model, task, test_loader, dataset, batch_size, out_root):
+        BaseSeeding.__init__(self, model, task, test_loader, dataset, out_root)
         self.batch_size = batch_size
         self.bounds = test_loader.bounds
 
@@ -51,7 +51,7 @@ class WhiteboxSeeding(BaseSeeding):
         for step in range(steps):
             off = (step * self.batch_size)
             batch_x = seed_x[off: off + self.batch_size].clone().to(self.device)
-            batch_out = self.model.mid_forward(batch_x, layer_index=layer_index).detach().cpu()
+            batch_out = self.model.fed_forward(batch_x, layer_index=layer_index).detach().cpu()
             outputs.append(batch_out.clone())
         outputs = torch.cat(outputs)
         num_neurons = outputs.shape[-1]
@@ -77,7 +77,7 @@ class WhiteboxSeeding(BaseSeeding):
                 optimizer = torch.optim.Adam([x_], lr=lr)
                 for iter in range(iters):
                     x_.requires_grad = True
-                    out = self.model.mid_forward(x_, layer_index=layer_index)
+                    out = self.model.fed_forward(x_, layer_index=layer_index)
                     optimizer.zero_grad()
                     cost = -torch.mean(out.view(1, -1, num_neurons), dim=1)[0][idx]
                     cost.backward()

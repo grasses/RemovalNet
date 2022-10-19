@@ -30,7 +30,7 @@ out_root = osp.join(ROOT, "output")
 class DeepJudge(Fingerprinting):
     def __init__(self, model1, model2, test_loader, device, out_root,
                  blackbox=False, seed_method="PGD", layer_index=4,
-                 batch_size=200, DIGISTS=4):
+                 batch_size=100, DIGISTS=4, seed=1000):
         super().__init__(model1, model2, device=device, out_root=out_root)
         assert seed_method in ["FGSM", "PGD", "CW", "Random", "IPGuard"]
         self.metrics = ["ROB", "JSD", "LOD", "LAD", "NOD", "NAD", "MR"]
@@ -43,7 +43,7 @@ class DeepJudge(Fingerprinting):
 
         # init logger
         self.logger = logging.getLogger('DeepJudge')
-        self.logger.info(f'-> comparing {model1} vs {model2}')
+        self.logger.info(f'-> comparing {model1.task} vs {model2.task}')
 
         # init dataset
         self.test_loader = test_loader
@@ -51,19 +51,19 @@ class DeepJudge(Fingerprinting):
         self.dataset = test_loader.dataset_id
 
         # init model
-        self.arch1 = str(model1)
-        self.arch2 = str(model2)
-        self.model1 = model1.torch_model.to(self.device)
-        self.model2 = model2.torch_model.to(self.device)
+        self.task1 = model1.task
+        self.task2 = model2.task
+        self.model1 = model1.to(self.device)
+        self.model2 = model2.to(self.device)
 
     def compare(self):
         return self.verify(self.extract())
 
     def extract(self):
         # step1: generate seed samples
-        Bseed = BlackboxSeeding(self.model1, arch=self.arch1, test_loader=self.test_loader, dataset=self.dataset,
+        Bseed = BlackboxSeeding(self.model1, task=self.task1, test_loader=self.test_loader, dataset=self.dataset,
                                 batch_size=self.batch_size, out_root=self.fingerprint_root)
-        Wseed = WhiteboxSeeding(self.model1, arch=self.arch1, test_loader=self.test_loader, dataset=self.dataset,
+        Wseed = WhiteboxSeeding(self.model1, task=self.task1, test_loader=self.test_loader, dataset=self.dataset,
                                 batch_size=self.batch_size, out_root=self.fingerprint_root)
         seed_x, seed_y = Bseed.load_seed_samples()
 
@@ -116,7 +116,7 @@ class DeepJudge(Fingerprinting):
                 result["LAD"] = self.mertic_LAD(target_model, attack_model, tests=tests)
             elif method == "NAD":
                 result["NAD"] = self.mertic_NAD(target_model, attack_model, tests=tests)
-        self.logger.info(f"-> {self.arch1} vs {self.arch2} res:{result}")
+        self.logger.info(f"-> {self.task1} vs {self.task2} res:{result}")
         del test_x, test_y, tests
         return result
 
@@ -339,7 +339,7 @@ def get_args():
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-seed_method", action="store", default="PGD", type=str, choices=["FGSM", "PGD", "CW"], help="Type of blackbox generation")
     parser.add_argument("-batch_size", action="store", default=200, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=999, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-seed", default=1024, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = ROOT
     args.namespace = format_time
@@ -359,8 +359,8 @@ def main():
                         )#filename=f"{args.logs_root}/{filename}_{args.namespace}.txt")
     benchmark = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
 
-    model1 = benchmark.get_model_wrapper(args.model1)
-    model2 = benchmark.get_model_wrapper(args.model2)
+    model1 = benchmark.load_wrapper(args.model1, seed=args.seed).torch_model(seed=1000)
+    model2 = benchmark.load_wrapper(args.model2, seed=args.seed).torch_model(seed=args.seed)
     test_loader = loader.get_dataloader(model1.dataset_id)
 
     layer_index = 5
@@ -368,7 +368,9 @@ def main():
         args.device = torch.device("cpu")
 
     out_root = osp.join(args.out_root, "DeepJudge")
-    deepjudge = DeepJudge(model1, model2, test_loader=test_loader, device=args.device, out_root=out_root, batch_size=args.batch_size, layer_index=layer_index, seed_method=args.seed_method)
+    deepjudge = DeepJudge(model1, model2, test_loader=test_loader,
+                          device=args.device, seed=args.seed, out_root=out_root, batch_size=args.batch_size,
+                          layer_index=layer_index, seed_method=args.seed_method)
     dist = deepjudge.verify(deepjudge.extract())
     print(f"-> DeepJudge dist: {dist}")
 

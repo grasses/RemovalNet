@@ -14,25 +14,29 @@ import torchvision
 import logging
 from torchvision import transforms
 from . import inputx32, inputx64, inputx224
-from dataset.inputx32 import CIFAR10
+from dataset.inputx32 import CIFAR10, CINIC10
 from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data, CUB200Data, ImageNet
 DATA_ROOT = osp.join(osp.abspath(osp.dirname(__file__)), "data")
 logger = logging.getLogger('DataLoader')
 
 task_list = {
-    "CV32": ["CIFAR10", "CIFAR100"],
+    "CV32": ["CIFAR10", "CIFAR100", "CINIC10"],
     "CV224": ["SDog120", "Flower102", "ImageNet"],
     "AUDIO": [],
 }
 
 
 def load_cfg(dataset_id, arch_id=None):
-    return eval(f"inputx{get_size(dataset_id)}.cfg()")
+    cfg = eval(f"inputx{get_size(dataset_id)}.cfg()")
+    if "resnet" in arch_id:
+        cfg.lr /= 5.0
+    return cfg
 
 
 def get_num_classess(dataset_id):
     NUM_CLASSES = {
         "CIFAR10": 10,
+        "CINIC10": 10,
         "CIFAR100": 100,
         "GSTB": 200,
         "MIT67": 67,
@@ -49,6 +53,7 @@ def get_num_classess(dataset_id):
 def get_size(dataset_id):
     INPUT_SIZE = {
         "CIFAR10": 32,
+        "CINIC10": 32,
         "CIFAR100": 32,
         "GSTB": 64,
         "MIT67": 224,
@@ -94,7 +99,7 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
     datapath = os.path.join(DATA_ROOT, dataset_id)
     assert os.path.exists(datapath)
 
-    cfg = load_cfg(dataset_id=dataset_id)
+    cfg = load_cfg(dataset_id=dataset_id, arch_id="")
     normalize = torchvision.transforms.Normalize(mean=cfg.mean, std=cfg.std)
     if split == 'train':
         dataset = eval(dataset_id)(

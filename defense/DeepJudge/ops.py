@@ -49,7 +49,7 @@ def batch_mid_forward(model, x, layer_index, batch_size=200):
         for step in range(steps):
             off = (step * batch_size)
             batch_x = x[off: off+batch_size].clone().to(device)
-            batch_out = model.mid_forward(batch_x, layer_index=layer_index).detach().cpu()
+            batch_out = model.fed_forward(batch_x, layer_index=layer_index).detach().cpu()
             outputs.append(batch_out)
         del batch_x, batch_out, x
         outputs = torch.cat(outputs).detach().cpu()

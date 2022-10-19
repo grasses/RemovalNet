@@ -9,10 +9,27 @@ __copyright__ = 'Copyright © 2022/09/22, homeway'
 import os
 import os.path as osp
 import functools
-import torch
+import torch, math
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def batch_fed_forward(model, x, layer_index, batch_size=200):
+    steps = math.ceil(len(x) / batch_size)
+    device = next(model.parameters()).device
+    outputs = []
+    with torch.no_grad():
+        for step in range(steps):
+            off = (step * batch_size)
+            batch_x = x[off: off+batch_size].clone().to(device)
+            batch_out = model.fed_forward(batch_x, layer_index=layer_index).detach().cpu()
+            outputs.append(batch_out)
+        del batch_x, batch_out, x
+        outputs = torch.cat(outputs).detach().cpu()
+        torch.cuda.empty_cache()
+    return outputs
+
 
 def numpy(x):
     if torch.is_tensor(x):

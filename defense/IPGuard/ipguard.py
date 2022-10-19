@@ -23,8 +23,8 @@ ROOT = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__)
 
 
 class IPGuard(Fingerprinting):
-    def __init__(self, model1, model2, out_root, device, batch_size=100,
-                 k=1, steps=1000, test_size=100, targeted="R"):
+    def __init__(self, model1, model2, test_loader, out_root, device, batch_size=100,
+                 k=1, steps=1000, test_size=100, targeted="L", seed=1000):
         super().__init__(model1, model2, device=device, out_root=out_root)
         self.k = k
         self.steps = steps
@@ -34,18 +34,19 @@ class IPGuard(Fingerprinting):
 
         # init logger
         self.logger = logging.getLogger('IPGuard')
-        self.logger.info(f'-> comparing {model1} vs {model2}')
+        self.logger.info(f'-> comparing {model1.task} vs {model2.task}')
 
         # init dataset
+        self.seed = seed
         self.dataset = model1.dataset_id
-        self.test_loader = model1.get_test_loader(batch_size=batch_size, shuffle=True)
+        self.test_loader = test_loader
         self.bounds = self.test_loader.bounds
 
         # init model
-        self.arch1 = str(model1)
-        self.arch2 = str(model2)
-        self.model1 = model1.torch_model.to(self.device)
-        self.model2 = model2.torch_model.to(self.device)
+        self.task1 = model1.task
+        self.task2 = model2.task
+        self.model1 = model1.to(self.device)
+        self.model2 = model2.to(self.device)
 
     def extract(self):
         """
@@ -53,7 +54,7 @@ class IPGuard(Fingerprinting):
         :return:
         """
         self.logger.info("-> extract fingerprint...")
-        path = osp.join(self.fingerprint_root, f"{self.arch1}_{self.dataset}_t{self.targeted}k{self.k}.pt")
+        path = osp.join(self.fingerprint_root, f"{self.task1}_{self.dataset}_t{self.targeted}k{self.k}.pt")
         if osp.exists(path):
             self.logger.info(f"-> load from cache:{path}")
             return torch.load(path, map_location="cpu")
@@ -88,7 +89,7 @@ class IPGuard(Fingerprinting):
             y2.append(ops.batch_forward(model=self.model2, x=test_x, argmax=True))
         y2 = torch.cat(y2)
         matching_rate = round(float(y1.eq(y2.view_as(y1)).sum()) / len(y1), 5)
-        self.logger.info(f"-> {self.arch1} vs {self.arch2} matching_rate:{matching_rate}")
+        self.logger.info(f"-> {self.task1} vs {self.task2} matching_rate:{matching_rate}")
         return matching_rate
 
     def compare(self):
@@ -102,14 +103,14 @@ def get_args():
     parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(ROOT, "model/ckpt"),
                         help="Path to the dir of benchmark models.")
     parser.add_argument("-model1", action="store", dest="model1", default="pretrain(resnet18,ImageNet)-",
-                        required=True, help="model 1.")
+                        required=False, help="model 1.")
     parser.add_argument("-model2", action="store", dest="model2",
-                        default="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-", required=True, help="model 2.")
+                        default="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-", required=False, help="model 2.")
     parser.add_argument("-k", action="store", default=5, type=int, help="k of IPGuard")
     parser.add_argument("-targeted", action="store", default="L", type=str, help="L:lest-likely R:random", choices=["L", "R"])
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-batch_size", action="store", default=200, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=999, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = ROOT
     args.namespace = format_time
@@ -121,6 +122,7 @@ def get_args():
 
 def main():
     from benchmark import ImageBenchmark
+    from dataset import loader as dloader
     args = get_args()
     ops.set_default_seed(args.seed)
 
@@ -129,12 +131,14 @@ def main():
                         format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
                         )#filename=f"{args.logs_root}/{filename}_{args.namespace}.txt")
     benchmark = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
-    model1 = benchmark.get_model_wrapper(args.model1)
-    model2 = benchmark.get_model_wrapper(args.model2)
-    if "quantize" in str(model1) or "quantize" in str(model2):
+    model1 = benchmark.load_wrapper(args.model1, seed=1000).torch_model(seed=1000)
+    model2 = benchmark.load_wrapper(args.model2, seed=args.seed).torch_model(seed=args.seed)
+
+    if "quantize" in model1.task or "quantize" in model2.task:
         args.device = torch.device("cpu")
 
-    ipguard = IPGuard(model1=model1, model2=model2, device=args.device, out_root=args.fingerprint_root, k=args.k)
+    test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id, split="test", shuffle=True)
+    ipguard = IPGuard(model1=model1, model2=model2, test_loader=test_loader, device=args.device, out_root=args.fingerprint_root, k=args.k, seed=args.seed)
     rate = ipguard.compare()
     print(f"-> IPGuard matching_rate: {rate}")
 
