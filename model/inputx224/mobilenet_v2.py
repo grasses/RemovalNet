@@ -7,6 +7,7 @@ __copyright__ = 'Copyright © 2022/07/29, homeway'
 
 import types
 import torch
+import torch.nn.functional as F
 
 
 def feature_list(self, x):
@@ -28,8 +29,8 @@ def feature_list(self, x):
     out_list.append(x.contiguous().view(x.size(0), -1))
     x = self.layerx5(x)
     out_list.append(x.contiguous().view(x.size(0), -1))
-    x = self.avgpool(x)
-    x = x.reshape(x.size(0), -1)
+    x = F.adaptive_avg_pool2d(x, (1, 1))
+    x = torch.flatten(x, 1)
     y = self.classifier(x)
     return y, out_list
 
@@ -57,9 +58,9 @@ def mid_forward(self, x, layer_index):
         x = self.layerx5(x)
     if layer_index == 4:
         x = self.layerx5(x)
-    x = self.avgpool(x)
-    x = x.reshape(x.size(0), -1)
-    x = self.fc(x)
+    x = F.adaptive_avg_pool2d(x, (1, 1))
+    x = torch.flatten(x, 1)
+    x = self.classifier(x)
     return x.contiguous()
 
 
@@ -86,92 +87,80 @@ def fed_forward(self, x, layer_index):
 
 
 def layerx1(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.conv1(x)
-    x = self.bn1(x)
-    x = self.relu(x)
-    x = self.maxpool(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
+    x = self.model.features[0](x)
+    x = self.model.features[1](x)
+    x = self.model.features[2](x)
+    x = self.model.features[3](x)
     return x.contiguous()
 
 
 def layerx2(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.layer1(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
+    x = self.model.features[4](x)
+    x = self.model.features[5](x)
+    x = self.model.features[6](x)
     return x.contiguous()
 
 
 def layerx3(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.layer2(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
+    x = self.model.features[7](x)
+    x = self.model.features[8](x)
+    x = self.model.features[9](x)
+    x = self.model.features[10](x)
     return x.contiguous()
 
 
 def layerx4(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.layer3(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
+    x = self.model.features[11](x)
+    x = self.model.features[12](x)
+    x = self.model.features[13](x)
+    x = self.model.features[14](x)
+    x = self.model.features[15](x)
+    x = self.model.features[16](x)
     return x.contiguous()
 
 
 def layerx5(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.layer4(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
+    x = self.model.features[17](x)
+    x = self.model.features[18](x)
     return x.contiguous()
 
 
-def resnet34(num_classes=1000, pretrained=True, **kwargs):
-    from torchvision.models.resnet import resnet34 as torch_resnet34
-    model = torch_resnet34(num_classes=num_classes, pretrained=pretrained, **kwargs)
+def mobilenet_v2(num_classes=1000, pretrained=True, **kwargs):
+    from torchvision.models.mobilenetv2 import MobileNetV2 as torch_mobilenetv2
+    model = torch_mobilenetv2(num_classes=num_classes, **kwargs)
     model.layerx1 = types.MethodType(layerx1, model)
     model.layerx2 = types.MethodType(layerx2, model)
     model.layerx3 = types.MethodType(layerx3, model)
     model.layerx4 = types.MethodType(layerx4, model)
     model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
+    model.layer1 = model.features[3]
+    model.layer2 = model.features[6]
+    model.layer3 = model.features[10]
+    model.layer4 = model.features[16]
+    model.layer5 = model.features[18]
     model.feature_list = types.MethodType(feature_list, model)
     model.mid_forward = types.MethodType(mid_forward, model)
     model.fed_forward = types.MethodType(fed_forward, model)
     return model
 
 
-def resnet50(num_classes=1000, pretrained=True, **kwargs):
-    from torchvision.models.resnet import resnet50 as torch_resnet50
-    model = torch_resnet50(num_classes=num_classes, pretrained=pretrained, **kwargs)
-    model.layerx1 = types.MethodType(layerx1, model)
-    model.layerx2 = types.MethodType(layerx2, model)
-    model.layerx3 = types.MethodType(layerx3, model)
-    model.layerx4 = types.MethodType(layerx4, model)
-    model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
-    model.feature_list = types.MethodType(feature_list, model)
-    model.mid_forward = types.MethodType(mid_forward, model)
-    model.fed_forward = types.MethodType(fed_forward, model)
-    return model
-
-
-def resnet101(num_classes=1000, pretrained=True, **kwargs):
-    from torchvision.models.resnet import resnet101 as torch_resnet101
-    model = torch_resnet101(num_classes=num_classes, pretrained=pretrained, **kwargs)
-    model.layerx1 = types.MethodType(layerx1, model)
-    model.layerx2 = types.MethodType(layerx2, model)
-    model.layerx3 = types.MethodType(layerx3, model)
-    model.layerx4 = types.MethodType(layerx4, model)
-    model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
-    model.feature_list = types.MethodType(feature_list, model)
-    model.mid_forward = types.MethodType(mid_forward, model)
-    model.fed_forward = types.MethodType(fed_forward, model)
-    return model
-
+def record_act(self, input, output):
+    self.out = output
 
 if __name__ == "__main__":
-    model = resnet50(pretrained=False)
+    model = mobilenet_v2(pretrained=False)
     x = torch.randn(1, 3, 224, 224)
     fmap3 = model.fed_forward(x, layer_index=3)
     logit = model.mid_forward(fmap3, layer_index=3)
     pred1 = logit.argmax(dim=1)
 
     fmap5 = model.fed_forward(x, layer_index=5)
-    x = model.avgpool(fmap5)
-    x = x.reshape(x.size(0), -1)
+    x = F.adaptive_avg_pool2d(fmap5, (1, 1))
+    x = torch.flatten(x, 1)
     pred2 = model.classifier(x).argmax(dim=1)
     print(pred1, pred2)

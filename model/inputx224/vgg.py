@@ -19,8 +19,9 @@ class VGG(nn.Module):
 
         self.layer_list = features.keys()
         self.num_feats = 25088
-        for name, layer in features.items():
+        for idx, (name, layer) in enumerate(features.items()):
             setattr(self, name, layer)
+            setattr(self, f"layerx{idx}", layer)
 
         # CIFAR 10 (7, 7) to (1, 1)
         # self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
@@ -34,7 +35,7 @@ class VGG(nn.Module):
             nn.Dropout(),
             nn.Linear(4096, num_classes)
         )
-
+        self.classifier = self.fc
         if init_weights:
             self._initialize_weights()
 
@@ -52,11 +53,11 @@ class VGG(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def features(self, x):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.layer5(x)
+        x = self.layerx1(x)
+        x = self.layerx2(x)
+        x = self.layerx3(x)
+        x = self.layerx4(x)
+        x = self.layerx5(x)
         return x
 
     def forward(self, x):
@@ -66,59 +67,73 @@ class VGG(nn.Module):
         x = self.fc(x)
         return x
 
-    def bak_forward(self, x, layer_index):
+    def mid_forward(self, x, layer_index):
+        """
+        Feed x to model from $layer_index layer
+        Args:
+            self: Densenet
+            x: Tensor
+            layer_index: Int
+        Returns: Tensor
+        """
         if layer_index == 1:
-            x = self.layer1(x)
-            x = self.layer2(x)
-            x = self.layer3(x)
-            x = self.layer4(x)
-            x = self.layer5(x)
+            x = self.layerx2(x)
+            x = self.layerx3(x)
+            x = self.layerx4(x)
+            x = self.layerx5(x)
         if layer_index == 2:
-            x = self.layer2(x)
-            x = self.layer3(x)
-            x = self.layer4(x)
-            x = self.layer5(x)
+            x = self.layerx3(x)
+            x = self.layerx4(x)
+            x = self.layerx5(x)
         if layer_index == 3:
-            x = self.layer3(x)
-            x = self.layer4(x)
-            x = self.layer5(x)
+            x = self.layerx4(x)
+            x = self.layerx5(x)
         if layer_index == 4:
-            x = self.layer4(x)
-            x = self.layer5(x)
-        if layer_index == 5:
-            x = self.layer5(x)
+            x = self.layerx5(x)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
-        return x
+        return x.contiguous()
 
     def fed_forward(self, x, layer_index):
-        x = self.layer1(x)
+        """
+        Feed x to model from head to $layer_index layer
+        Args:
+            self: Densenet
+            x: Tensor
+            layer_index: Int
+        Returns: Tensor
+        """
+        x = self.layerx1(x)
         if layer_index == 1: return x.contiguous()
-        x = self.layer2(x)
+        x = self.layerx2(x)
         if layer_index == 2: return x.contiguous()
-        x = self.layer3(x)
+        x = self.layerx3(x)
         if layer_index == 3: return x.contiguous()
-        x = self.layer4(x)
+        x = self.layerx4(x)
         if layer_index == 4: return x.contiguous()
-        x = self.layer5(x)
+        x = self.layerx5(x)
         if layer_index == 5: return x.contiguous()
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        return x
+        return x.contiguous()
 
     def feature_list(self, x):
+        """
+        Return feature map of each layer
+        Args:
+            self: Densenet
+            x: Tensor
+        Returns: Tensor, list
+        """
         out_list = []
-        x = self.layer1(x)
+        x = self.layerx1(x)
         out_list.append(x.contiguous().view(x.size(0), -1))
-        x = self.layer2(x)
+        x = self.layerx2(x)
         out_list.append(x.contiguous().view(x.size(0), -1))
-        x = self.layer3(x)
+        x = self.layerx3(x)
         out_list.append(x.contiguous().view(x.size(0), -1))
-        x = self.layer4(x)
+        x = self.layerx4(x)
         out_list.append(x.contiguous().view(x.size(0), -1))
-        x = self.layer5(x)
+        x = self.layerx5(x)
         out_list.append(x.contiguous().view(x.size(0), -1))
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)

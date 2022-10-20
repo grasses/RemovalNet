@@ -5,13 +5,16 @@ __author__ = 'homeway'
 __copyright__ = 'Copyright © 2022/06/28, homeway'
 
 
+import copy
 import torch
 import numpy as np
 import os.path as osp
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 from utils import helper
+from torchcam.methods import LayerCAM
 sys_args = helper.get_args()
+
 
 
 def plot_logists(pos, file_path, lims=100, fontsize=30):
@@ -54,9 +57,56 @@ def plot_learning_curve(data, file_path, fontsize=30):
 
 
 
+def pixel_plot(data, ax, fontsize=18, hide_labels=False):
+    pc = ax.pcolormesh(data, vmin=0, vmax=1)
+    if not hide_labels:
+        ax.set_xlabel('x-label', fontsize=fontsize)
+        ax.set_ylabel('y-label', fontsize=fontsize)
+        ax.set_title('Title', fontsize=fontsize)
+    return pc
+
+
+def plot_layer_cam(model_0, model_t, x, y, target_layer, fig_path, size=10, fontsize=30):
+    x = x.clone()
+    model_0 = copy.deepcopy(model_0).to(x.device)
+    model_t = copy.deepcopy(model_t).to(x.device)
+
+    class_idx = y.clone().cpu().numpy().tolist()
+    extractor_0 = LayerCAM(model_0, target_layer)
+    cams = extractor_0(class_idx=class_idx, scores=model_0(x))
+    fused_cam_0 = extractor_0.fuse_cams(cams).detach().cpu()
+
+    extractor_t = LayerCAM(model_t, target_layer)
+    cams = extractor_t(class_idx=class_idx, scores=model_t(x))
+    fused_cam_t = extractor_t.fuse_cams(cams).detach().cpu()
+
+    fig = plt.figure(constrained_layout=True, figsize=(12, size * 4))
+    subfigs = fig.subfigures(1, 2, wspace=0.07)
+    axsLeft = subfigs[0].subplots(size, 1, sharey=True)
+    subfigs[0].set_facecolor('0.75')
+    for nn, ax in enumerate(axsLeft):
+        fmap = fused_cam_0[nn].squeeze(0).numpy()
+        pc = pixel_plot(fmap, ax, hide_labels=True)
+    subfigs[0].suptitle('model_0 featuremap', fontsize=fontsize-5)
+    subfigs[0].colorbar(pc, shrink=0.6, ax=axsLeft, location='bottom')
+
+    axsRight = subfigs[1].subplots(size, 1, sharex=True)
+    for nn, ax in enumerate(axsRight):
+        fmap = fused_cam_t[nn].squeeze(0).numpy()
+        pc = pixel_plot(fmap, ax, hide_labels=True)
+    subfigs[1].set_facecolor('0.85')
+    subfigs[1].colorbar(pc, shrink=0.6, ax=axsRight, location='bottom')
+    subfigs[1].suptitle('model_t featuremap', fontsize=fontsize-5)
+    fig.suptitle(f'LayerCAM of {target_layer}', fontsize=fontsize)
+
+    fig_path = fig_path + f".pdf"
+    print(f"-> save LayerCam:{fig_path}")
+    plt.savefig(fig_path)
+
+
 def plot_logist_embedding(teacher, student, test_loader, out_root, file_name, device=sys_args.device):
-    teacher = teacher.to(device)
-    student = student.to(device)
+    teacher = teacher.to(device).train()
+    student = student.to(device).train()
     logist1 = []
     logist2 = []
 
@@ -90,7 +140,7 @@ def plot_logist_embedding(teacher, student, test_loader, out_root, file_name, de
     file_path = osp.join(out_root, file_name)
     plot_logists(pos, file_path=file_path, lims=100)
 
-    select_logist_array = torch.cat(select_logist1 + select_logist2).numpy()
+    select_logist_array = torch.cat(select_logist1 + select_logist2).detach().cpu().numpy()
     pos = TSNE(n_components=2, n_iter=1000, random_state=12345).fit_transform(select_logist_array)
 
     name = "_"

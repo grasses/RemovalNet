@@ -2,11 +2,12 @@
 # -*- coding:utf-8 -*-
 
 __author__ = 'homeway'
-__copyright__ = 'Copyright © 2022/07/29, homeway'
+__copyright__ = 'Copyright © 2022/10/20, homeway'
 
 
 import types
 import torch
+import torch.nn.functional as F
 
 
 def feature_list(self, x):
@@ -28,8 +29,9 @@ def feature_list(self, x):
     out_list.append(x.contiguous().view(x.size(0), -1))
     x = self.layerx5(x)
     out_list.append(x.contiguous().view(x.size(0), -1))
-    x = self.avgpool(x)
-    x = x.reshape(x.size(0), -1)
+    x = F.relu(x, inplace=True)
+    x = F.adaptive_avg_pool2d(x, (1, 1))
+    x = torch.flatten(x, 1)
     y = self.classifier(x)
     return y, out_list
 
@@ -57,9 +59,10 @@ def mid_forward(self, x, layer_index):
         x = self.layerx5(x)
     if layer_index == 4:
         x = self.layerx5(x)
-    x = self.avgpool(x)
-    x = x.reshape(x.size(0), -1)
-    x = self.fc(x)
+    x = F.relu(x, inplace=True)
+    x = F.adaptive_avg_pool2d(x, (1, 1))
+    x = torch.flatten(x, 1)
+    x = self.classifier(x)
     return x.contiguous()
 
 
@@ -86,92 +89,106 @@ def fed_forward(self, x, layer_index):
 
 
 def layerx1(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.conv1(x)
-    x = self.bn1(x)
-    x = self.relu(x)
-    x = self.maxpool(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/densenet.py"""
+    x = self.features.conv0(x)
+    x = self.features.norm0(x)
+    x = self.features.relu0(x)
+    x = self.features.pool0(x)
     return x.contiguous()
 
 
 def layerx2(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.layer1(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/densenet.py"""
+    x = self.features.denseblock1(x)
+    x = self.features.transition1(x)
     return x.contiguous()
 
 
 def layerx3(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.layer2(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/densenet.py"""
+    x = self.features.denseblock2(x)
+    x = self.features.transition2(x)
     return x.contiguous()
 
 
 def layerx4(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.layer3(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/densenet.py"""
+    x = self.features.denseblock3(x)
+    x = self.features.transition3(x)
     return x.contiguous()
 
 
 def layerx5(self, x):
-    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py"""
-    x = self.layer4(x)
+    """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/densenet.py"""
+    x = self.features.denseblock4(x)
+    x = self.features.norm5(x)
     return x.contiguous()
 
 
-def resnet34(num_classes=1000, pretrained=True, **kwargs):
-    from torchvision.models.resnet import resnet34 as torch_resnet34
-    model = torch_resnet34(num_classes=num_classes, pretrained=pretrained, **kwargs)
+def densenet121(num_classes=1000, pretrained=True, **kwargs):
+    from torchvision.models.densenet import densenet121 as torch_densenet121
+    model = torch_densenet121(num_classes=num_classes, pretrained=pretrained, **kwargs)
     model.layerx1 = types.MethodType(layerx1, model)
     model.layerx2 = types.MethodType(layerx2, model)
     model.layerx3 = types.MethodType(layerx3, model)
     model.layerx4 = types.MethodType(layerx4, model)
     model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
     model.feature_list = types.MethodType(feature_list, model)
     model.mid_forward = types.MethodType(mid_forward, model)
     model.fed_forward = types.MethodType(fed_forward, model)
     return model
 
 
-def resnet50(num_classes=1000, pretrained=True, **kwargs):
-    from torchvision.models.resnet import resnet50 as torch_resnet50
-    model = torch_resnet50(num_classes=num_classes, pretrained=pretrained, **kwargs)
+def densenet161(num_classes=1000, pretrained=True, **kwargs):
+    from torchvision.models.densenet import densenet161 as torch_densenet161
+    model = torch_densenet161(num_classes=num_classes, pretrained=pretrained, **kwargs)
     model.layerx1 = types.MethodType(layerx1, model)
     model.layerx2 = types.MethodType(layerx2, model)
     model.layerx3 = types.MethodType(layerx3, model)
     model.layerx4 = types.MethodType(layerx4, model)
     model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
     model.feature_list = types.MethodType(feature_list, model)
     model.mid_forward = types.MethodType(mid_forward, model)
     model.fed_forward = types.MethodType(fed_forward, model)
     return model
 
 
-def resnet101(num_classes=1000, pretrained=True, **kwargs):
-    from torchvision.models.resnet import resnet101 as torch_resnet101
-    model = torch_resnet101(num_classes=num_classes, pretrained=pretrained, **kwargs)
+def densenet169(num_classes=1000, pretrained=True, **kwargs):
+    from torchvision.models.densenet import densenet169 as torch_densenet169
+    model = torch_densenet169(num_classes=num_classes, pretrained=pretrained, **kwargs)
     model.layerx1 = types.MethodType(layerx1, model)
     model.layerx2 = types.MethodType(layerx2, model)
     model.layerx3 = types.MethodType(layerx3, model)
     model.layerx4 = types.MethodType(layerx4, model)
     model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
     model.feature_list = types.MethodType(feature_list, model)
     model.mid_forward = types.MethodType(mid_forward, model)
     model.fed_forward = types.MethodType(fed_forward, model)
     return model
+
+
+def densenet201(num_classes=1000, pretrained=True, **kwargs):
+    from torchvision.models.densenet import densenet201 as torch_densenet201
+    model = torch_densenet201(num_classes=num_classes, pretrained=pretrained, **kwargs)
+    model.layerx1 = types.MethodType(layerx1, model)
+    model.layerx2 = types.MethodType(layerx2, model)
+    model.layerx3 = types.MethodType(layerx3, model)
+    model.layerx4 = types.MethodType(layerx4, model)
+    model.layerx5 = types.MethodType(layerx5, model)
+    model.feature_list = types.MethodType(feature_list, model)
+    model.mid_forward = types.MethodType(mid_forward, model)
+    model.fed_forward = types.MethodType(fed_forward, model)
+    return model
+
+
+def record_act(self, input, output):
+    self.out = output
 
 
 if __name__ == "__main__":
-    model = resnet50(pretrained=False)
+    model = densenet121(pretrained=False)
     x = torch.randn(1, 3, 224, 224)
     fmap3 = model.fed_forward(x, layer_index=3)
     logit = model.mid_forward(fmap3, layer_index=3)
-    pred1 = logit.argmax(dim=1)
-
-    fmap5 = model.fed_forward(x, layer_index=5)
-    x = model.avgpool(fmap5)
-    x = x.reshape(x.size(0), -1)
-    pred2 = model.classifier(x).argmax(dim=1)
-    print(pred1, pred2)
+    pred = logit.argmax(dim=1)
+    print(pred, model.layerx1.out)
