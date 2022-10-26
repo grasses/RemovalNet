@@ -119,7 +119,7 @@ class Trainer:
             model = model.to(args.device)
 
         start_step = 0
-        split_step = [math.ceil(self.args.iterations * 0.25), math.ceil(self.args.iterations * 0.5), self.args.iterations]
+        split_step = [math.ceil(self.args.iterations * 0.2), math.ceil(self.args.iterations * 0.5), self.args.iterations]
         print("-> split_step", split_step)
 
         print(f"-> Task: {args.task_str}")

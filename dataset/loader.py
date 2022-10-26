@@ -30,6 +30,8 @@ def load_cfg(dataset_id, arch_id=None):
     cfg = eval(f"inputx{get_size(dataset_id)}.cfg()")
     if "resnet" in arch_id:
         cfg.lr /= 5.0
+    if 'alexnet' in arch_id:
+        cfg.lr /= 4.0
     return cfg
 
 

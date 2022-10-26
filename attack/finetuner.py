@@ -26,7 +26,8 @@ class Finetuner(object):
         teacher,
         train_loader,
         test_loader,
-        init_models=True
+        init_models=True,
+        debug=False
     ):
         self.args = args
         self.device = args.device
@@ -38,6 +39,7 @@ class Finetuner(object):
         self.reg_layers = {}
         if init_models:
             self.init_models()
+        self.debug = debug
 
     def init_models(self):
         args = self.args
@@ -48,8 +50,9 @@ class Finetuner(object):
         def record_act(self, input, output):
             self.out = output
 
-        if 'mbnetv2' in args.network:
-            reg_layers = {0: [model.layer1], 1: [model.layer2], 2: [model.layer3], 3: [model.layer4]}
+        if 'mbnetv2' in args.network or 'mobilenet' in args.network:
+            reg_layers = {0: [model.layer1, teacher.layer1], 1: [model.layer2, teacher.layer2],
+                          2: [model.layer3, teacher.layer3], 3: [model.layer4, teacher.layer4]}
             model.layer1.register_forward_hook(record_act)
             model.layer2.register_forward_hook(record_act)
             model.layer3.register_forward_hook(record_act)
@@ -57,18 +60,28 @@ class Finetuner(object):
             if '5' in args.feat_layers:
                 reg_layers[4] = [model.layer5]
                 model.layer5.register_forward_hook(record_act)
-
         elif 'resnet' in args.network:
-            reg_layers = {0: [model.layer1], 1: [model.layer2], 2: [model.layer3], 3: [model.layer4]}
+            reg_layers = {0: [model.layer1, teacher.layer1], 1: [model.layer2, teacher.layer2],
+                          2: [model.layer3, teacher.layer3], 3: [model.layer4, teacher.layer4]}
             model.layer1.register_forward_hook(record_act)
             model.layer2.register_forward_hook(record_act)
             model.layer3.register_forward_hook(record_act)
             model.layer4.register_forward_hook(record_act)
-
-        elif 'vgg' in args.network:
-            reg_layers = {0: [model.layer3], 1: [model.layer4]}
+        elif ('vgg' in args.network) or ('alexnet' in args.network):
+            reg_layers = {0: [model.layer3, teacher.layer3], 1: [model.layer4, teacher.layer4],
+                          2: [model.layer5, teacher.layer5]}
             model.layer3.register_forward_hook(record_act)
             model.layer4.register_forward_hook(record_act)
+            model.layer5.register_forward_hook(record_act)
+        elif 'densenet' in args.network:
+            reg_layers = {0: [model.features.denseblock2, teacher.features.denseblock2],
+                          1: [model.features.denseblock3, teacher.features.denseblock3],
+                          2: [model.features.denseblock4, teacher.features.denseblock4]}
+            model.features.denseblock2.register_forward_hook(record_act)
+            model.features.denseblock3.register_forward_hook(record_act)
+            model.features.denseblock4.register_forward_hook(record_act)
+        else:
+            raise NotImplementedError(f"-> Not implemented for:{args.network}")
 
         # Stored pre-trained weights for computing L2SP
         for m in model.modules():
@@ -93,23 +106,28 @@ class Finetuner(object):
             for m in modules[-num_tune_modules:]:
                 m.reset_parameters()
 
-        if 'vgg' not in args.network:
-            reg_layers[0].append(teacher.layer1)
+        if 'mbnetv2' in args.network or 'mobilenet' in args.network:
             teacher.layer1.register_forward_hook(record_act)
-            reg_layers[1].append(teacher.layer2)
             teacher.layer2.register_forward_hook(record_act)
-            reg_layers[2].append(teacher.layer3)
             teacher.layer3.register_forward_hook(record_act)
-            reg_layers[3].append(teacher.layer4)
             teacher.layer4.register_forward_hook(record_act)
             if '5' in args.feat_layers:
-                reg_layers[4].append(teacher.layer5)
                 teacher.layer5.register_forward_hook(record_act)
-        else:
-            reg_layers[0].append(teacher.layer3)
+        elif 'resnet' in args.network:
+            teacher.layer1.register_forward_hook(record_act)
+            teacher.layer2.register_forward_hook(record_act)
             teacher.layer3.register_forward_hook(record_act)
-            reg_layers[1].append(teacher.layer4)
             teacher.layer4.register_forward_hook(record_act)
+        elif ('vgg' in args.network) or ('alexnet' in args.network):
+            teacher.layer3.register_forward_hook(record_act)
+            teacher.layer4.register_forward_hook(record_act)
+            teacher.layer5.register_forward_hook(record_act)
+        elif 'densenet' in args.network:
+            teacher.features.denseblock2.register_forward_hook(record_act)
+            teacher.features.denseblock3.register_forward_hook(record_act)
+            teacher.features.denseblock4.register_forward_hook(record_act)
+        else:
+            raise NotImplementedError(f"-> Not implemented for:{args.network}")
         self.reg_layers = reg_layers
 
 
@@ -246,7 +264,6 @@ class Finetuner(object):
             teststep = min(teststep, len(test_loader))
             phar = tqdm(range(teststep))
             loader = iter(test_loader)
-
             for step in phar:
                 try:
                     batch, label = next(loader)
@@ -384,7 +401,7 @@ class Finetuner(object):
             wf.write('\t'.join(columns) + '\n')
         
         dataloader_iterator = iter(train_loader)
-        warmup_iter = [100, 200]
+        warmup_iter = [500, 1000]
 
         for i in range(iterations):
             model.train()
@@ -452,7 +469,7 @@ class Finetuner(object):
                 )
                 progress.display(i)
 
-            if (i % args.test_interval == 0 and i > 0) or (i == iterations-1) or (i in warmup_iter):
+            if self.debug and ((i % args.test_interval == 0 and i > 0) or (i == iterations-1) or (i in warmup_iter)):
                 if self.args.steal:
                     test_top1, test_ce_loss, test_feat_loss, test_weight_loss = self.steal_test(
                         # model, teacher, test_loader, teststep=500, loss=True
@@ -496,7 +513,6 @@ class Finetuner(object):
                         round(test_weight_loss,2),
                     ]
                     af.write('\t'.join([str(c) for c in test_cols]) + '\n')
-
                 if not args.no_save:
                     ckpt_path = osp.join(
                         args.output_dir,
@@ -512,14 +528,12 @@ class Finetuner(object):
                         },
                         ckpt_path,
                     )
-
                 if i == (iterations-1):
                     acc_path = osp.join(
                         args.output_dir,
                         f"final_{round(test_top1, 3)}.tsv"
                     )
                     torch.save({}, acc_path)
-
 
             if ( hasattr(self, "iterative_prune") and i % args.prune_interval == 0 ):
                 self.iterative_prune(i)
