@@ -82,10 +82,10 @@ class BlackboxSeeding(Attack, BaseSeeding):
         adv_images = torch.clamp(adv_images, min=self.bounds[0], max=self.bounds[1]).detach()
         return self.targeted_samples(x=adv_images, y=labels, targeted=False)
 
-    def PGD(self, images, labels, eps=0.01, alpha=5.0 / 255.0, steps=40, random_start=True):
+    def PGD(self, images, labels, eps=0.01, alpha=5.0 / 255.0, steps=40, random_start=True, _targeted=False):
         images = images.clone().detach().to(self.device)
         labels = labels.clone().detach().to(self.device)
-        if self._targeted:
+        if _targeted:
             target_labels = self._get_target_label(images, labels)
         loss = torch.nn.CrossEntropyLoss()
         adv_images = images.clone().detach()
@@ -95,7 +95,7 @@ class BlackboxSeeding(Attack, BaseSeeding):
         for _ in range(steps):
             adv_images.requires_grad = True
             outputs = self.model(adv_images)
-            if self._targeted:
+            if _targeted:
                 cost = -loss(outputs, target_labels)
             else:
                 cost = loss(outputs, labels)

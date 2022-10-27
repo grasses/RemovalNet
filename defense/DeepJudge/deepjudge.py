@@ -339,7 +339,7 @@ def get_args():
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-seed_method", action="store", default="PGD", type=str, choices=["FGSM", "PGD", "CW"], help="Type of blackbox generation")
     parser.add_argument("-batch_size", action="store", default=200, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=1024, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = ROOT
     args.namespace = format_time
@@ -363,7 +363,7 @@ def main():
     model2 = benchmark.load_wrapper(args.model2, seed=args.seed).torch_model(seed=args.seed)
     test_loader = loader.get_dataloader(model1.dataset_id)
 
-    layer_index = 5
+    layer_index = 4
     if "quantize" in str(model1) or "quantize" in str(model2):
         args.device = torch.device("cpu")
 
