@@ -1,0 +1,83 @@
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+
+__author__ = 'homeway'
+__copyright__ = 'Copyright © 2022/10/10, homeway'
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.preprocessing import normalize
+
+
+def rename_labels(labels):
+    for idx, name in enumerate(labels):
+        if "1" == name:
+            labels[idx] = "L1"
+        if "2" == name:
+            labels[idx] = "L2"
+        if "negative" in name:
+            labels[idx] = "Negative"
+        if "prune" in name:
+            ratio = name.split("(")[-1].split(")")[0]
+            labels[idx] = f"WP({ratio})"
+        if "distill" in name:
+            labels[idx] = "Distill"
+        if "steal" in name:
+            labels[idx] = "Steal"
+        if "quantize" in name:
+            qtype = name.split("(")[-1].split(")")[0]
+            labels[idx] = f"WQ({qtype})"
+        if "finetune" in name:
+            ratio = name.split(",")[-1].split(")")[0]
+            labels[idx] = f"FT({ratio})"
+    return labels
+
+
+def sigmoid(z):
+    """ this function implements the sigmoid function, and
+    expects a numpy array as argument """
+    sigmoid = 1.0 / (1.0 + np.exp(-z))
+    return sigmoid
+
+
+def normalize_dict(x, reverse=False):
+    x = np.array(x)
+    x_min = np.min(x)
+    x_max = np.max(x)
+    x = (x-x_min) / (x_max-x_min)
+    x = sigmoid(x)
+    if reverse:
+        x = 1-x
+    return x.tolist()
+
+
+def plot_boxplot(data, xticklabels, fpath=None, fontsize=30):
+    colors = ['pink', 'lightblue', 'lightgreen', 'bisque', 'lime', 'maroon']
+    figure, ax = plt.subplots(figsize=(18, 12))
+    ax.yaxis.grid(True)
+
+    off = 0
+    legends, bplots = [], []
+
+    for idx, (lenged, item) in enumerate(data.items()):
+        '''
+        if "cos" in lenged:
+            item = normalize_dict(item, reverse=True)
+        else:
+            item = normalize_dict(item)
+        '''
+        bplot = ax.boxplot(item, patch_artist=True, positions=np.arange(len(item))+off)
+        legends.append(lenged)
+        bplots.append(bplot["boxes"][0])
+        off += 0.2
+        for patch in bplot["boxes"]:
+            patch.set_facecolor(colors[idx])
+
+    legends = rename_labels(legends)
+    ax.legend(bplots, legends, loc='upper right', fontsize=fontsize)
+    plt.setp(ax, xticks=np.arange(len(item)), xticklabels=rename_labels(xticklabels))
+    plt.xticks(fontsize=fontsize-10)
+    plt.yticks(fontsize=fontsize-5)
+    print(f"-> save figugre:{fpath}")
+    plt.savefig(fpath)

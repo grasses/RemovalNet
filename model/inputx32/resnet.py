@@ -179,7 +179,6 @@ class ResNet(nn.Module):
         )
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
-        self.classifier = self.fc
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -266,7 +265,7 @@ class ResNet(nn.Module):
         x = self.layerx5(x)
         x = self.avgpool(x)
         x = x.reshape(x.size(0), -1)
-        x = self.classifier(x)
+        x = self.fc(x)
         return x
 
     def mid_forward(self, x, layer_index):
@@ -339,7 +338,7 @@ class ResNet(nn.Module):
         out_list.append(x.contiguous().view(x.size(0), -1))
         x = self.avgpool(x)
         x = x.reshape(x.size(0), -1)
-        y = self.classifier(x)
+        y = self.fc(x)
         return y, out_list
 
 

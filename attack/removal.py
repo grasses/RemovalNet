@@ -16,7 +16,7 @@ import numpy as np
 import torch.nn.functional as F
 from attack import ops
 from torch import optim
-from utils import metric, helper, vis as exp_F
+from utils import metric, helper, vis
 from torchmetrics.functional import pairwise_cosine_similarity
 format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
 ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -30,7 +30,7 @@ class DeepRemoval:
         self.batch_size = cfg.batch_size
         self.torch_model_path = cfg.models_dir
         self.logger = logging.getLogger('RemovalNet')
-        self.output_dir = osp.join(helper.ROOT, "output/Removal", str(cfg.task))
+        self.output_dir = osp.join(helper.ROOT, "output/Removal", f"{cfg.task}_{train_loader.dataset_id}_{self.cfg.ydist}")
         if not osp.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
@@ -94,7 +94,7 @@ class DeepRemoval:
             z_prime = z_prime.detach() - lr * grad.sign()
             for idx in range(z.shape[0]):
                 z_prime[idx][normalized_z[idx] > theta] = 0.0
-        print(f"-> feature_poison() ce_loss:{loss_ce.item()} {ydist}_dist:{loss_dist.item()}")
+        print(f"-> [feature_poison] ce_loss:{loss_ce.item()} {ydist}_dist:{loss_dist.item()}")
         return z_prime.clone().detach()
 
     def boundary_poison(self, model, x, y, ydist="l2"):
@@ -112,24 +112,19 @@ class DeepRemoval:
             logits_prime = logits.clone()
             h = lambda a, b, alpha: beta * a + (1 - beta) * b
             for i in range(batch_size):
-                for beta in np.arange(0, 1, 0.1):
+                for beta in np.arange(0.3, 1, 0.05):
                     out = h(logits[i], logits[idxs[i]], beta)
                     if out.argmax(dim=0) == y[i]:
                         logits_prime[i] = out
-                        beta_list.append(round(beta, 1))
+                        beta_list.append(round(beta, 2))
                         break
             norm = (logits_prime-logits).norm(p=2).mean().detach().cpu()
-            print(f"-> beta:{beta_list[:8]} norm:{norm}")
+            print(f"-> [boundary_poison] beta:{beta_list[:8]} logits_norm:{norm}")
             return logits_prime.detach()
 
     def deepremoval(self):
-        fig_path = os.path.join(self.output_dir, f"{self.cfg.ydist}_d{self.train_loader.dataset_id}")
         cfg = self.cfg
-        cfg.lr = 3e-3
-        cfg.poison_steps = 20
-        cfg.test_interval = 10
         iterations = cfg.iterations + 1
-
         model_0 = self.model_0
         model_t = self.model_t
         optimizer = optim.SGD(
@@ -142,14 +137,14 @@ class DeepRemoval:
         loader = iter(self.train_loader)
         val_x, val_y = next(loader)
         val_x, val_y = val_x.to(self.device), val_y.to(self.device)
-        for step in range(1, iterations+1):
+        for step in range(1, 1+iterations):
             try:
                 batch, label = next(loader)
             except:
                 loader = iter(self.train_loader)
                 batch, label = next(loader)
             x, y = batch.to(self.device), label.to(self.device)
-            k = random.randint(2, 4)
+            k = random.randint(1, 4)
 
             model_0.eval()
             model_t.eval()
@@ -169,28 +164,30 @@ class DeepRemoval:
             loss = loss_dist + loss_kd
             loss.backward()
             optimizer.step()
-
-            if (step % cfg.test_interval == 0):
-                acc1, acc2 = exp_F.plot_logist_embedding(model_0, model_t, self.test_loader, out_root=self.output_dir, file_name=f"RemovalNet_{cfg.ydist}_{step}.pdf")
-                print(f"-> For T:{step} [Train] model_0:{acc1}% model_t:{acc2}% loss:{loss.item()} loss_dist:{loss_dist.item()} loss_kd:{loss_kd.item()}")
-                self.save_torch_model(model_t.cpu(), step=step)
+            print(f"-> For T:{step}, [Train] loss:{loss.item()} loss_dist:{loss_dist.item()} loss_kd:{loss_kd.item()}")
 
             # testing & exp visualization
-            if step % 1 == 0 or (step == iterations - 1):
+            if step % cfg.test_interval == 0 or (step == iterations - 1):
                 _best_topk_acc, topk_acc, test_loss = metric.topk_test(model_t, self.test_loader, device=self.device, epoch=step, debug=True)
                 self.learning_data["t"].append(step)
                 self.learning_data["acc"].append(topk_acc["top1"])
                 self.learning_data["loss_dist"].append(ops.numpy(loss_dist))
                 self.learning_data["loss_kd"].append(ops.numpy(loss_kd))
-                exp_F.plot_learning_curve(self.learning_data, file_path=fig_path + "accuracy")
+                vis.view_learning_state(self.learning_data, file_path=osp.join(self.output_dir, "LR"))
 
-            if step % cfg.test_interval == 0:
+            if step % cfg.plot_interval == 0:
+                # plot LayerCAM
                 for k in [1, 2, 3, 4]:
-                    fig_path_cam = fig_path + f"_LayerCam_layer{k}_t{step}"
-                    exp_F.plot_layer_cam(model_0, model_t, x=val_x, y=val_y, target_layer=f"layer{k}", fig_path=fig_path_cam, device=self.device)
+                    fig_path = osp.join(self.output_dir, f"LayerCam_{cfg.layers[k]}_t{step}")
+                    vis.view_layer_activation(model_0, model_t, x=val_x, y=val_y, target_layer=cfg.layers[k-1], fig_path=fig_path, device=self.device)
+
+                # plot decision boundary
+                fig_path = osp.join(self.output_dir, f"Boundary")
+                acc1, acc2 = vis.view_decision_boundary(model_0, model_t, self.test_loader, fig_path=fig_path, step=step)
+                print(f"-> For T:{step} [Train] model_0:{acc1}% model_t:{acc2}% loss:{loss.item()} loss_dist:{loss_dist.item()} loss_kd:{loss_kd.item()}")
                 self.save_torch_model(model_t.cpu(), step=10*int(step/10))
             print()
-        print()
+        self.save_torch_model(model_t.cpu(), step=cfg.iterations)
 
 
 def get_args():
@@ -203,7 +200,6 @@ def get_args():
     parser.add_argument("-subset", type=str, required=True, help="substitute dataset of removalnet")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-ydist", action="store", default="l2", type=str, choices=["l2", "cosine", "kl"], help="distance of adv logits")
-
     parser.add_argument("-batch_size", action="store", default=100, type=int, help="GPU device id")
     parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
@@ -212,8 +208,29 @@ def get_args():
     args.out_root = osp.join(args.ROOT, "output")
     args.logs_root = osp.join(args.ROOT, "logs")
     args.removal_root = osp.join(args.out_root, "RemovalNet")
-    return args
 
+    args.alpha = 0.05
+    args.T = 10
+    args.momentum = 0.9
+    args.weight_decay = 1e-4
+    args.layers = ["layer1", "layer2", "layer3", "layer4", "layer5"]
+    if "CIFAR10" in args.model1:
+        args.alpha = 0.5
+        args.T = 1
+        args.lr = 1e-3
+        args.poison_steps = 20
+        args.test_interval = 1
+        args.plot_interval = 10
+        args.iterations = 300
+    elif "ImageNet" in args.model1:
+        args.lr = 1e-2
+        args.poison_steps = 30
+        args.plot_interval = 10
+        args.test_interval = 20
+        args.iterations = 400
+    if "densenet" in args.model1:
+        args.layers = ["features.pool0", "features.denseblock1", "features.denseblock2", "features.denseblock3", "features.denseblock4"]
+    return args
 
 
 import benchmark
@@ -221,29 +238,21 @@ from dataset import loader
 def main():
     args = get_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s")
-    bench = benchmark.ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
-    model0 = bench.load_wrapper(args.model1).load_torch_model()
-
-    bench = benchmark.ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
-    model1 = bench.load_wrapper(args.model1).load_torch_model()
+    benchmk = benchmark.ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
+    model0 = benchmk.load_wrapper(args.model1).load_torch_model()
+    model1 = benchmk.load_wrapper(args.model1).load_torch_model() # a deepcopy of model1
 
     # substitute dataset to train model
     train_loader = loader.get_dataloader(args.subset, split="train", batch_size=100)
     test_loader = loader.get_dataloader(model1.dataset_id, split="test", batch_size=500)
-    cfg = loader.load_cfg(dataset_id=args.subset, arch_id="")
-    cfg.layer_index = 5
-    cfg.alpha = 0.9
-    cfg.T = 20
-    cfg.ydist = args.ydist
-    cfg.iterations = 300
-    cfg.task = model1.task
-    cfg.seed = args.seed
 
-    removalnet = f"removalnet({args.subset},{cfg.alpha},{cfg.T},{args.ydist})-"
+    removalnet = f"removalnet({args.subset},{args.alpha},{args.T},{args.ydist})-"
     model_name = f"{str(model1.task)}{removalnet}"
-    cfg.models_dir = osp.join(args.models_dir, f'{model_name}')
 
-    removal = DeepRemoval(model0, model1, cfg, train_loader=train_loader, test_loader=test_loader)
+    args.task = model1.task
+    args.models_dir = osp.join(args.models_dir, f'{model_name}')
+
+    removal = DeepRemoval(model0, model1, args, train_loader=train_loader, test_loader=test_loader)
     removal.deepremoval()
 
 

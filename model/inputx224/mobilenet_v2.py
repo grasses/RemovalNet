@@ -88,45 +88,45 @@ def fed_forward(self, x, layer_index):
 
 def layerx1(self, x):
     """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
-    x = self.features[0](x)
-    x = self.features[1](x)
-    x = self.features[2](x)
-    x = self.features[3](x)
+    x = self.model.features[0](x)
+    x = self.model.features[1](x)
+    x = self.model.features[2](x)
+    x = self.model.features[3](x)
     return x.contiguous()
 
 
 def layerx2(self, x):
     """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
-    x = self.features[4](x)
-    x = self.features[5](x)
-    x = self.features[6](x)
+    x = self.model.features[4](x)
+    x = self.model.features[5](x)
+    x = self.model.features[6](x)
     return x.contiguous()
 
 
 def layerx3(self, x):
     """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
-    x = self.features[7](x)
-    x = self.features[8](x)
-    x = self.features[9](x)
-    x = self.features[10](x)
+    x = self.model.features[7](x)
+    x = self.model.features[8](x)
+    x = self.model.features[9](x)
+    x = self.model.features[10](x)
     return x.contiguous()
 
 
 def layerx4(self, x):
     """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
-    x = self.features[11](x)
-    x = self.features[12](x)
-    x = self.features[13](x)
-    x = self.features[14](x)
-    x = self.features[15](x)
-    x = self.features[16](x)
+    x = self.model.features[11](x)
+    x = self.model.features[12](x)
+    x = self.model.features[13](x)
+    x = self.model.features[14](x)
+    x = self.model.features[15](x)
+    x = self.model.features[16](x)
     return x.contiguous()
 
 
 def layerx5(self, x):
     """Layer detail see: https://github.com/pytorch/vision/blob/main/torchvision/models/mobilenetv2.py"""
-    x = self.features[17](x)
-    x = self.features[18](x)
+    x = self.model.features[17](x)
+    x = self.model.features[18](x)
     return x.contiguous()
 
 
@@ -149,23 +149,18 @@ def mobilenet_v2(num_classes=1000, pretrained=True, **kwargs):
     return model
 
 
+def record_act(self, input, output):
+    self.out = output
+
 if __name__ == "__main__":
-    def record_act(self, input, output):
-        self.out = output
-
-    import copy
     model = mobilenet_v2(pretrained=False)
-    #model.layer2.register_forward_hook(record_act)
-
     x = torch.randn(1, 3, 224, 224)
-    xx = copy.deepcopy(x)
-
     fmap3 = model.fed_forward(x, layer_index=3)
     logit = model.mid_forward(fmap3, layer_index=3)
     pred1 = logit.argmax(dim=1)
 
-    x = model.fed_forward(xx, layer_index=5)
-    x = F.adaptive_avg_pool2d(x, (1, 1))
+    fmap5 = model.fed_forward(x, layer_index=5)
+    x = F.adaptive_avg_pool2d(fmap5, (1, 1))
     x = torch.flatten(x, 1)
     pred2 = model.classifier(x).argmax(dim=1)
     print(pred1, pred2)

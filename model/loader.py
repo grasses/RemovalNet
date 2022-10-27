@@ -23,13 +23,11 @@ def load_model(dataset_id, arch_id, pretrained=False, pretrain=None, **kwargs):
     num_classes = dloader.get_num_classess(dataset_id)
     if dataset_id in dloader.task_list["CV32"]:
         from model.inputx32 import vgg19_bn, vgg13_bn, vgg11_bn, vgg16_bn
-        from model.inputx32 import resnet18, resnet34, resnet50
+        from model.inputx32 import resnet18, resnet34, resnet50, densenet121, mobilenet_v2
 
     elif dataset_id in dloader.task_list["CV224"]:
         from model.inputx224 import vgg19_bn, vgg13_bn, vgg11_bn, vgg16_bn
-        from model.inputx224 import resnet50
-        from model.inputx224 import densenet121
-        from model.inputx224 import mobilenet_v2
+        from model.inputx224 import resnet50, alexnet, densenet121, mobilenet_v2
         #from model.inputx224.vit import *
     else:
         raise NotImplementedError()

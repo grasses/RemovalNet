@@ -181,14 +181,22 @@ def densenet201(num_classes=1000, pretrained=True, **kwargs):
     return model
 
 
-def record_act(self, input, output):
-    self.out = output
-
 
 if __name__ == "__main__":
+    def record_act(self, input, output):
+        self.out = output
+
     model = densenet121(pretrained=False)
+    model.features[2].register_forward_hook(record_act)
+
     x = torch.randn(1, 3, 224, 224)
-    fmap3 = model.fed_forward(x, layer_index=3)
+    fmap3 = model.fed_forward(x.clone(), layer_index=3)
     logit = model.mid_forward(fmap3, layer_index=3)
-    pred = logit.argmax(dim=1)
-    print(pred, model.layerx1.out)
+    pred1 = logit.argmax(dim=1)
+
+    x = model.fed_forward(x.clone(), layer_index=5)
+    x = F.relu(x, inplace=True)
+    x = F.adaptive_avg_pool2d(x, (1, 1))
+    x = torch.flatten(x, 1)
+    pred2 = model.classifier(x).argmax(dim=1)
+    print(model.features[2].out.shape, pred1, pred2)

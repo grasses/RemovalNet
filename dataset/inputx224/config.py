@@ -30,7 +30,7 @@ def load_cfg():
     args.weight_decay = 1e-4
     args.beta = 1e-2
     args.feat_lmda = 0
-    args.test_interval = 500
+    args.test_interval = 2000
     args.adv_test_interval = -1
     args.feat_layers = '1234'
     args.no_save = False
@@ -43,9 +43,9 @@ def load_cfg():
     args.resize_size = 256
     args.batch_size = 50
 
-    args.TRAIN_ITERS = 20000
-    args.NEGATIVE_ITERS = 20000
-    args.STEAL_ITERS = 20000
+    args.TRAIN_ITERS = 30000
+    args.NEGATIVE_ITERS = 30000
+    args.STEAL_ITERS = 30000
     args.DISTILL_ITERS = 20000
     args.QUANTIZE_ITERS = 500
     args.PRUNE_ITERS = 500

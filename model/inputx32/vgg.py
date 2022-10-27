@@ -21,7 +21,7 @@ class VGG(nn.Module):
         self.num_feats = 512
         for idx, (name, layer) in enumerate(features.items()):
             setattr(self, name, layer)
-            setattr(self, f"layerx{idx}", layer)
+            setattr(self, f"layerx{idx+1}", layer)
 
         # CIFAR 10 (7, 7) to (1, 1)
         # self.avgpool = nn.AdaptiveAvgPool2d((7, 7))

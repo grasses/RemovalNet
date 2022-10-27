@@ -118,6 +118,10 @@ def layerx5(self, x):
     return x.contiguous()
 
 
+def classifier(self, x):
+    return self.fc(x)
+
+
 def resnet34(num_classes=1000, pretrained=True, **kwargs):
     from torchvision.models.resnet import resnet34 as torch_resnet34
     model = torch_resnet34(num_classes=num_classes, pretrained=pretrained, **kwargs)
@@ -126,7 +130,7 @@ def resnet34(num_classes=1000, pretrained=True, **kwargs):
     model.layerx3 = types.MethodType(layerx3, model)
     model.layerx4 = types.MethodType(layerx4, model)
     model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
+    model.classifier = types.MethodType(classifier, model)
     model.feature_list = types.MethodType(feature_list, model)
     model.mid_forward = types.MethodType(mid_forward, model)
     model.fed_forward = types.MethodType(fed_forward, model)
@@ -141,7 +145,7 @@ def resnet50(num_classes=1000, pretrained=True, **kwargs):
     model.layerx3 = types.MethodType(layerx3, model)
     model.layerx4 = types.MethodType(layerx4, model)
     model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
+    model.classifier = types.MethodType(classifier, model)
     model.feature_list = types.MethodType(feature_list, model)
     model.mid_forward = types.MethodType(mid_forward, model)
     model.fed_forward = types.MethodType(fed_forward, model)
@@ -156,7 +160,7 @@ def resnet101(num_classes=1000, pretrained=True, **kwargs):
     model.layerx3 = types.MethodType(layerx3, model)
     model.layerx4 = types.MethodType(layerx4, model)
     model.layerx5 = types.MethodType(layerx5, model)
-    model.classifier = model.fc
+    model.classifier = types.MethodType(classifier, model)
     model.feature_list = types.MethodType(feature_list, model)
     model.mid_forward = types.MethodType(mid_forward, model)
     model.fed_forward = types.MethodType(fed_forward, model)
