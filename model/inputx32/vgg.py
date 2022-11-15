@@ -21,7 +21,6 @@ class VGG(nn.Module):
         self.num_feats = 512
         for idx, (name, layer) in enumerate(features.items()):
             setattr(self, name, layer)
-            setattr(self, f"layerx{idx+1}", layer)
 
         # CIFAR 10 (7, 7) to (1, 1)
         # self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
@@ -36,7 +35,6 @@ class VGG(nn.Module):
             nn.Dropout(),
             nn.Linear(4096, num_classes),
         )
-        self.classifier = self.fc
 
         if init_weights:
             self._initialize_weights()
@@ -54,12 +52,27 @@ class VGG(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
 
+    def layerx1(self, x):
+        return self.layer1(x).contiguous()
+
+    def layerx2(self, x):
+        return self.layer2(x).contiguous()
+
+    def layerx3(self, x):
+        return self.layer3(x).contiguous()
+
+    def layerx4(self, x):
+        return self.layer4(x).contiguous()
+
+    def layerx5(self, x):
+        return self.layer5(x).contiguous()
+
     def features(self, x):
-        x = self.layerx1(x)
-        x = self.layerx2(x)
-        x = self.layerx3(x)
-        x = self.layerx4(x)
-        x = self.layerx5(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.layer5(x)
         return x
 
     def forward(self, x):

@@ -16,13 +16,14 @@ from torchvision import transforms
 from . import inputx32, inputx64, inputx224
 from dataset.inputx32 import CIFAR10, CINIC10
 from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data, CUB200Data, ImageNet
+#from dataset.audio import SpeechCommands
 DATA_ROOT = osp.join(osp.abspath(osp.dirname(__file__)), "data")
 logger = logging.getLogger('DataLoader')
 
 task_list = {
     "CV32": ["CIFAR10", "CIFAR100", "CINIC10"],
     "CV224": ["SDog120", "Flower102", "ImageNet"],
-    "AUDIO": [],
+    "AUDIO": ["SpeechCommands"],
 }
 
 
@@ -104,9 +105,10 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
 
     cfg = load_cfg(dataset_id=dataset_id, arch_id="")
     normalize = torchvision.transforms.Normalize(mean=cfg.mean, std=cfg.std)
+
     if split == 'train':
         dataset = eval(dataset_id)(
-            datapath, True, transform=transforms.Compose([
+            datapath, split, transform=transforms.Compose([
                 transforms.Resize(cfg.resize_size),
                 transforms.CenterCrop(cfg.input_size),
                 transforms.RandomHorizontalFlip(),
@@ -115,9 +117,9 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
             ]),
             shots=shots, seed=cfg.seed, preload=False
         )
-    else:
+    elif split == 'test' or split == 'val':
         dataset = eval(dataset_id)(
-            datapath, False, transform=transforms.Compose([
+            datapath, split, transform=transforms.Compose([
                 transforms.Resize(cfg.resize_size),
                 transforms.CenterCrop(cfg.input_size),
                 transforms.ToTensor(),
@@ -125,6 +127,8 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
             ]),
             shots=shots, seed=cfg.seed, preload=False
         )
+    else:
+        raise NotImplementedError()
 
     data_loader = torch.utils.data.DataLoader(
         dataset,
@@ -138,7 +142,7 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
     data_loader.num_classes = dataset.num_classes
     data_loader.bounds = get_bounds(cfg.mean, cfg.std)
     data_loader.unnormalize = unnormalize
-    logger.info(f'-> get_dataloader success: {dataset_id}_{split}, iter_size:{len(data_loader)} num_classes:{data_loader.num_classes}')
+    logger.info(f'-> get_dataloader success: {dataset_id}_{split}, iter_size:{len(data_loader)} batch_size:{batch_size} num_classes:{data_loader.num_classes}')
     return data_loader
 
 
@@ -175,7 +179,7 @@ def get_seed_samples(dataset_id, batch_size, rand=False, shuffle=True, with_labe
             if unormalize:
                 return images, unnormalize_images, bounds, labels
             return images, labels
-    logger.info(f"-> get_seed_samples from:{dataset_id} of size:{batch_size}")
+    logger.info(f"-> get_seed_samples from:{dataset_id} batch_size:{batch_size}")
     return images
 
 

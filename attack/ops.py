@@ -31,6 +31,11 @@ def batch_fed_forward(model, x, layer_index, batch_size=200):
     return outputs
 
 
+def init_weights(model):
+    for m in model.modules():
+        if type(m) in [nn.Linear, nn.BatchNorm2d, nn.Conv2d]:
+            m.reset_parameters()
+
 def numpy(x):
     if torch.is_tensor(x):
         return x.detach().cpu().numpy()

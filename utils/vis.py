@@ -66,8 +66,8 @@ def view_learning_state(data, file_path, fontsize=30):
 
 def view_layer_activation(model_0, model_t, x, y, target_layer, fig_path, size=8, fontsize=30, device=torch.device("cuda:1")):
     x = x.clone()
-    model_0 = copy.deepcopy(model_0).to(device)
-    model_t = copy.deepcopy(model_t).to(device)
+    model_0 = model_0.to(device)
+    model_t = model_t.to(device)
 
     class_idx = y.tolist()
     CAM0 = LayerCAM(model_0, target_layer)

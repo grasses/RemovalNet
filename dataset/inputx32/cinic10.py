@@ -18,6 +18,7 @@ def compute_sha256(filename,block_size=4096*16):
             sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
 
+
 class CINIC10(torchvision.datasets.vision.VisionDataset):
     """`CIFAR10 <https://www.cs.toronto.edu/~kriz/cifar.html>`_ Dataset.
 
@@ -54,7 +55,7 @@ class CINIC10(torchvision.datasets.vision.VisionDataset):
     def __init__(
         self,
         root: str= os.path.expanduser("~/.datasets/cinic10"),
-        is_train: bool = True,
+        split: str = "train",
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None,
         download: bool = True,
@@ -63,13 +64,12 @@ class CINIC10(torchvision.datasets.vision.VisionDataset):
         preload: bool = False
     ) -> None:
         super().__init__(root, transform=transform, target_transform=target_transform)
-        partition = "train" if is_train else "test"
-        assert partition in PARTS,f"{partition} not in {PARTS}"
-        self.partition = partition
+        assert split in PARTS,f"{split} not in {PARTS}"
+        self.partition = split
         self.root = root
         self.num_classes = 10
-        #if download:
-        #    self.download()
+        if download:
+            self.download()
 
         #if not self._check_integrity():
         #    raise RuntimeError("Dataset not found or corrupted. You can use download=True to download it")

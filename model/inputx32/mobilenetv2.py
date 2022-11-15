@@ -4,6 +4,7 @@ import torch.nn as nn
 import types
 import torch.nn.functional as F
 
+
 __all__ = ["MobileNetV2", "mobilenet_v2"]
 
 
@@ -118,12 +119,10 @@ class MobileNetV2(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        x = self.features(x)
-        x = x.mean([2, 3])
-        x = torch.flatten(x, 1)
-        x = self.classifier(x)
-        return x
-
+        z = self.features(x)
+        z = z.mean([2, 3])
+        y = self.classifier(z)
+        return y
 
 
 def feature_list(self, x):
@@ -269,33 +268,32 @@ def mobilenet_v2(pretrained=False, progress=True, device="cpu", **kwargs):
     model.layerx3 = types.MethodType(layerx3, model)
     model.layerx4 = types.MethodType(layerx4, model)
     model.layerx5 = types.MethodType(layerx5, model)
-    model.layer1 = model.features[3]
-    model.layer2 = model.features[6]
-    model.layer3 = model.features[10]
-    model.layer4 = model.features[16]
-    model.layer5 = model.features[18]
     model.feature_list = types.MethodType(feature_list, model)
     model.mid_forward = types.MethodType(mid_forward, model)
     model.fed_forward = types.MethodType(fed_forward, model)
     return model
 
+
 if __name__ == "__main__":
     def record_act(self, input, output):
         self.out = output
 
-    import copy
     model = mobilenet_v2(pretrained=False)
-    model.layer2.register_forward_hook(record_act)
-    x = torch.randn(1, 3, 32, 32)
-    xx = copy.deepcopy(x)
+    model.features[10].register_forward_hook(record_act)
 
-    fmap3 = model.fed_forward(x, layer_index=3)
-    logit = model.mid_forward(fmap3, layer_index=3)
-    pred1 = logit.argmax(dim=1)
+    x = torch.randn(4, 3, 32, 32)
+    y = torch.ones([4]).long() * 2
 
-    x = model.fed_forward(xx, layer_index=5)
-    x = F.relu(x, inplace=True)
-    x = F.adaptive_avg_pool2d(x, (1, 1))
-    x = torch.flatten(x, 1)
-    pred2 = model.classifier(x).argmax(dim=1)
-    print(model.layer2.out.shape, pred1, pred2)
+    model.eval()
+    pred1 = model(x).argmax(dim=1)
+
+    fmap3 = model.fed_forward(x, layer_index=1)
+    logit = model.mid_forward(fmap3, layer_index=1)
+    pred2 = logit.argmax(dim=1)
+
+    z = model.fed_forward(x, layer_index=5)
+    z = z.mean([2, 3])
+    z = torch.flatten(z, 1)
+    pred3 = model.classifier(z).argmax(dim=1)
+
+    print(model.features[10].out.shape, pred1.tolist(), pred2.tolist(), pred3.tolist())

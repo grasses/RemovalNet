@@ -51,8 +51,8 @@ def get_args():
     args.logs_root = osp.join(args.ROOT, "logs")
     args.zest_root = osp.join(args.out_root, "ZEST", "exp")
     args.archs = {
-        "CIFAR10": ["resnet34", "vgg16_bn"],
-        "ImageNet": ["vgg16_bn"],
+        "CIFAR10": ["resnet50"],
+        "ImageNet": ["resnet50"],
     }
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
     helper.set_default_seed(seed=args.seed)
@@ -62,16 +62,25 @@ def get_args():
     return args
 
 
-def exp11_eval(args):
-    methods = ["negative", "finetune", "distill", "steal", "prune"]
-    out_root = osp.join(args.out_root, "ZEST")
+def rename_metric(key):
+    if key == "2":
+        key = "L2"
+    elif key == "1":
+        key = "L1"
+    elif key == "inf":
+        key = "Linf"
+    return key
 
+
+def exp11_eval(args):
+    methods = ["quantize", "negative", "finetune", "prune", "distill", "steal"]
+    out_root = osp.join(args.out_root, "ZEST")
     for arch in args.archs[args.dataset]:
         result = {}
         tag = f"{args.dataset}_{arch}"
         path = osp.join(args.zest_root, f"exp11_{tag}.pt")
         if not osp.exists(path):
-            cfg = dloader.load_cfg(dataset_id=args.dataset)
+            cfg = dloader.load_cfg(dataset_id=args.dataset, arch_id=arch)
             bench = ImageBenchmark(
                 archs=[arch],
                 datasets=[args.dataset],
@@ -80,47 +89,79 @@ def exp11_eval(args):
             models = bench.list_models(cfg=cfg, methods=methods)
             model1, test_loader, fingerprint = None, None, None
             for idx, model in enumerate(models):
+                print(f"-> run for model:{str(model)}")
+                device = torch.device("cpu") if "quantize" in str(model) else args.device
                 print(f"-> idx:{idx} runing for model:{model} seed:{model.seed}")
                 if idx == 0:
                     model1 = model.torch_model(seed=1000)
                     test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=128)
                     continue
-
                 key = f"{model1.task}_{str(model)}"
                 if key not in result.keys():
                     result[key] = {
-                        "1": [],
-                        "2": [],
+                        "L1": [],
+                        "L2": [],
                         "cosine": [],
-                        "inf": []
+                        "Linf": []
                     }
                 model2 = model.torch_model(seed=model.seed)
-                zest = ZEST(model1, model2, test_loader=test_loader,
-                                 device=args.device,
-                                 out_root=out_root)
+                zest = ZEST(model1, model2, test_loader=test_loader, device=device, out_root=out_root)
                 fingerprint = zest.extract(cache=False)
                 dist = zest.verify(fingerprint)
                 for metric in dist.keys():
-                    result[key][metric].append(dist[metric])
-                print()
-                torch.save(result, path)
+                    result[key][rename_metric(metric)].append(dist[metric])
+            print()
+            torch.save(result, path)
         result = torch.load(path, map_location="cpu")
         yield tag, result
 
 
-def plot_boxplot(result, tag, fpath):
+def exp11_eval_removalnet(args):
+    out_root = osp.join(args.out_root, "ZEST")
+    cfg = dloader.load_cfg(dataset_id=args.dataset, arch_id=args.archs[args.dataset][0])
+    benchmk = ImageBenchmark(
+        archs=args.archs[args.dataset][0],
+        datasets=[args.dataset],
+        datasets_dir=args.datasets_dir,
+        models_dir=args.models_dir)
+    model1 = benchmk.load_wrapper(args.model1, seed=1000).load_torch_model()
+    model2 = benchmk.load_wrapper(args.model2, seed=args.seed).load_torch_model()
+    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=128)
+    zest = ZEST(model1, model2, test_loader=test_loader, device=args.device, out_root=out_root)
+    fingerprint = zest.extract(cache=False)
+    item = zest.verify(fingerprint)
+
+    print(item)
+    for metric in item.keys():
+        min_v = round(min(item[metric]), 2)
+        max_v = round(max(item[metric]), 2)
+        med_v = round(((max_v + min_v) / 2), 2)
+        mean_v = round(np.mean(item[metric]), 2)
+        std_v = round(np.std(item[metric]), 2)
+        print(f"-> Removal metric: {metric} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
+
+
+def plot_boxplot(result, tag, fpath=None):
     xticklabels = []
     data = {}
-    metrics = ["2"]
+    metrics = ["L2", "L1", "Linf", "cosine"]
     for label, item in result.items():
-        xticklabels.append(label.split("-")[-2])
+        model = label.split("-")[-2]
+        xticklabels.append(model)
         for metric in item.keys():
+            min_v = round(min(item[metric]), 2)
+            max_v = round(max(item[metric]), 2)
+            med_v = round(((max_v + min_v) / 2), 2)
+            mean_v = round(np.mean(item[metric]), 2)
+            std_v = round(np.std(item[metric]), 2)
+            print(f"-> model:{model} metric: {rename_metric(metric)} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
             if metric not in metrics:
                 continue
             if metric not in data.keys():
                 data[metric] = []
             data[metric].append(item[metric])
-    vis.plot_boxplot(data, xticklabels=xticklabels, fpath=fpath)
+    if fpath is not None:
+        vis.plot_boxplot(data, xticklabels=xticklabels, fpath=fpath)
 
 
 def main():
@@ -129,13 +170,8 @@ def main():
     for tag, result in exp11_eval(args):
         fpath = osp.join(args.zest_root, f"exp11_{tag}_boxplot.pdf")
         plot_boxplot(result, tag, fpath)
-
-
-
-
-
-
-
+    print(f"-> Running for removalnet")
+    exp11_eval_removalnet(args)
 
 
 if __name__ == "__main__":

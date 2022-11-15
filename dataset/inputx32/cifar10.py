@@ -51,7 +51,7 @@ class CIFAR10(VisionDataset):
     def __init__(
         self,
         root: str,
-        train: bool = True,
+        split: str = "train",
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None,
         download: bool = False,
@@ -61,20 +61,20 @@ class CIFAR10(VisionDataset):
     ) -> None:
 
         super().__init__(root, transform=transform, target_transform=target_transform)
-
-        self.train = train
+        self.split = split
         if download:
             self.download()
-
         self.num_classes = 10
 
         if not self._check_integrity():
             raise RuntimeError("Dataset not found or corrupted. You can use download=True to download it")
 
-        if self.train:
+        if split == "train":
             downloaded_list = self.train_list
-        else:
+        elif split == "test":
             downloaded_list = self.test_list
+        else:
+            raise NotImplementedError()
 
         self.data: Any = []
         self.targets = []
@@ -143,7 +143,7 @@ class CIFAR10(VisionDataset):
         download_and_extract_archive(self.url, self.root, filename=self.filename, md5=self.tgz_md5)
 
     def extra_repr(self) -> str:
-        split = "Train" if self.train is True else "Test"
+        split = "Train" if self.split == "train" else "Test"
         return f"Split: {split}"
 
 

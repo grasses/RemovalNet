@@ -42,10 +42,10 @@ def load_cfg():
     args.resize_size = 32
     args.batch_size = 200
 
-    args.TRAIN_ITERS = 10000
+    args.TRAIN_ITERS = 50000
+    args.STEAL_ITERS = 20000
     args.NEGATIVE_ITERS = 10000
     args.DISTILL_ITERS = 10000
-    args.STEAL_ITERS = 10000
     args.QUANTIZE_ITERS = 1000
     args.PRUNE_ITERS = 1000
     args.FINETUNING_ITERS = 1000

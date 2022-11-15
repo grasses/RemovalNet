@@ -359,11 +359,11 @@ def main():
                         )#filename=f"{args.logs_root}/{filename}_{args.namespace}.txt")
     benchmark = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
 
-    model1 = benchmark.load_wrapper(args.model1, seed=args.seed).torch_model(seed=1000)
+    model1 = benchmark.load_wrapper(args.model1, seed=args.seed).torch_model(seed=args.seed)
     model2 = benchmark.load_wrapper(args.model2, seed=args.seed).torch_model(seed=args.seed)
     test_loader = loader.get_dataloader(model1.dataset_id)
 
-    layer_index = 4
+    layer_index = 3
     if "quantize" in str(model1) or "quantize" in str(model2):
         args.device = torch.device("cpu")
 

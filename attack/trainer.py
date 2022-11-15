@@ -11,10 +11,11 @@ independent train process
 import math
 import torch
 import torch.backends.cudnn as cudnn
+from torch import nn
 from utils import helper
-best_acc = 0.0
 import random
-
+from utils import metric
+best_acc = 0.0
 
 class Trainer:
     def __init__(
@@ -23,8 +24,7 @@ class Trainer:
             model,
             teacher,
             train_loader,
-            test_loader,
-            init_models=True
+            test_loader
     ):
         self.args = args
         self.device = args.device
@@ -35,6 +35,10 @@ class Trainer:
         self.reg_layers = {}
         helper.set_default_seed(args.seed)
         self.epoch = args.iterations
+        if args.reinit:
+            for m in model.modules():
+                if type(m) in [nn.Linear, nn.BatchNorm2d, nn.Conv2d]:
+                    m.reset_parameters()
 
     def train_epoch(self, model, optimizer, train_loader, step_start, step_end, device, backends):
         model.train()
@@ -75,7 +79,6 @@ class Trainer:
                 )
             )
         return model
-
 
     def test(self, model, test_loader, device, backends):
         global best_acc
@@ -119,28 +122,30 @@ class Trainer:
             model = model.to(args.device)
 
         start_step = 0
-        split_step = [math.ceil(self.args.iterations * 0.2), math.ceil(self.args.iterations * 0.5), self.args.iterations]
+        split_step = [math.ceil(self.args.iterations * 0.3), math.ceil(self.args.iterations * 0.6), self.args.iterations]
         print("-> split_step", split_step)
 
         print(f"-> Task: {args.task_str}")
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr * (1 + 0.1 * random.random()), momentum=0.9, weight_decay=args.weight_decay)
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr * (1 + 0.4 * random.random()), momentum=0.9, weight_decay=args.weight_decay)
         self.train_epoch(model, optimizer, train_loader, step_start=start_step, step_end=split_step[0], device=args.device, backends=args.backends)
         print(f"-> Task: {args.task_str}")
-        self.test(model, test_loader, device=args.device, backends=args.backends)
+        metric.topk_test(model=model, test_loader=test_loader, device=args.device, epoch=split_step[0], debug=True)
 
         print(f"-> Task: {args.task_str}")
-        optimizer = torch.optim.SGD(model.parameters(), lr=(1 + 0.1 * random.random()) * args.lr/10.0, momentum=0.9, weight_decay=args.weight_decay)
+        ratio = 10.0 if "CIFAR10" in args.task_str else 5.0
+        optimizer = torch.optim.SGD(model.parameters(), lr=(1 + 0.4 * random.random()) * args.lr/ratio, momentum=0.9, weight_decay=args.weight_decay)
         self.train_epoch(model, optimizer, train_loader, step_start=split_step[0], step_end=split_step[1],
                          device=args.device, backends=args.backends)
         print(f"-> Task: {args.task_str}")
-        self.test(model, test_loader, device=args.device, backends=args.backends)
+        metric.topk_test(model=model, test_loader=test_loader, device=args.device, epoch=split_step[1], debug=True)
 
         print(f"-> Task: {args.task_str}")
-        optimizer = torch.optim.SGD(model.parameters(), lr=(1 + 0.1 * random.random()) * args.lr/100.0, momentum=0.9, weight_decay=args.weight_decay)
+        ratio = 100.0 if "CIFAR10" in args.task_str else 50.0
+        optimizer = torch.optim.SGD(model.parameters(), lr=(1 + 0.4 * random.random()) * args.lr/ratio, momentum=0.9, weight_decay=args.weight_decay)
         self.train_epoch(model, optimizer, train_loader, step_start=split_step[1], step_end=split_step[2],
                          device=args.device, backends=args.backends)
         print(f"-> Task: {args.task_str}")
-        self.test(model, test_loader, device=args.device, backends=args.backends)
+        metric.topk_test(model=model, test_loader=test_loader, device=args.device, epoch=split_step[2], debug=True)
         return model
 
 

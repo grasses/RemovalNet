@@ -1,123 +1,111 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import os, datetime, pytz
+import sys
+import os
 import argparse
+import time
 import logging
-import os.path as osp
+import pathlib
+import tempfile
+import copy
+import random
 import torch
 import numpy as np
 from scipy import spatial
 import torch.nn as nn
-from utils import helper, ops
+import os.path as osp
+from utils import helper
+from attack.ops import lazy_property
 from defense import Fingerprinting
-format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
-ROOT = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from utils import ops
 
 
 class ModelDiff(Fingerprinting):
+    N_INPUT_PAIRS = 300
     MAX_VAL = 256
-    def __init__(self, model1, model2, test_loader, out_root, device, seed,
-                 gen_inputs=None, input_metrics=None, compute_decision_dist=None,
-                 compare_ddv=None, test_size=128):
+
+    def __init__(self, model1, model2, test_loader, out_root, device, seed, epsilon=1.0):
         super().__init__(model1, model2, device=device, out_root=out_root)
-
-        # init logger
-        self.seed = seed
         self.logger = logging.getLogger('ModelDiff')
-        self.logger.info(f'-> comparing {model1} vs {model2}')
 
-        self.test_size = test_size # =N in the paper
+        self.seed = seed
+        ops.set_default_seed(seed)
+        self.arch1 = str(model1.task)
+        self.arch2 = str(model2.task)
+
+        self.epsilon = epsilon
+        self.gen_inputs = self._gen_profiling_inputs_search
+        self.input_metrics = self.metrics_output_diversity
+        self.compute_decision_dist = self._compute_decision_dist_output_cos
+        self.compare_ddv = self._compare_ddv_cos
+
+        data, _ = next(iter(test_loader))
+        self.input_shape = data.shape
+        self.test_size = test_loader.batch_size
+        self.model1.to(self.device)
+        self.model2.to(self.device)
         self.test_loader = test_loader
 
-        # init model
-        self.arch1 = str(model1)
-        self.arch2 = str(model2)
-        self.gen_profiling_inputs = gen_inputs if gen_inputs else self.gen_profiling_inputs_search
-        self.input_metrics = input_metrics if input_metrics else ModelDiff.metrics_output_diversity
-        self.compute_decision_dist = compute_decision_dist if compute_decision_dist else ModelDiff._compute_decision_dist_output_cos
-        self.compare_ddv = compare_ddv if compare_ddv else ModelDiff._compare_ddv_cos
-        self.fp_path = osp.join(self.fingerprint_root, f"{self.arch1}_{self.arch2}.pt")
+        model1_root = osp.join(self.fingerprint_root, f"{self.arch1}")
+        if not osp.exists(model1_root):
+            os.makedirs(model1_root)
+        self.fp_path = osp.join(model1_root, f"{self.arch2}_e{epsilon}_s{seed}.pt")
 
-    def extract(self, **kwargs):
-        """
-        extract fingerprint samples.
-        :return:
-        """
-        self.logger.info("-> extract fingerprint...")
-        if osp.exists(self.fp_path):
-            self.logger.info(f"-> load from cache:{self.fp_path}")
-            return torch.load(self.fp_path, map_location="cpu")["inputs"]
+    def get_seed_inputs(self, rand=False):
+        seed_inputs = np.concatenate([
+            self.model1.get_seed_inputs(self.N_INPUT_PAIRS, rand=rand),
+            self.model2.get_seed_inputs(self.N_INPUT_PAIRS, rand=rand)
+        ])
+        return seed_inputs
 
-        self.logger.info(f'-> generating seed inputs')
-        seed_inputs, labels = next(iter(self.test_loader))
-        np.random.shuffle(seed_inputs)
-        seed_inputs = np.array(seed_inputs)
-        seed_inputs = torch.from_numpy(seed_inputs)
+    def extract(self):
+        if not osp.exists(self.fp_path):
+            seed_x, seed_y = next(iter(self.test_loader))
+            seed_inputs = seed_x.to('cpu').numpy()
+            np.random.shuffle(seed_inputs)
+            seed_inputs = np.array(seed_inputs)
+            seed_inputs = torch.from_numpy(seed_inputs)
+            fingerprints = self.gen_inputs(seed_inputs, epsilon=self.epsilon)
+            torch.save({"fingerprints": fingerprints}, self.fp_path)
+        else:
+            self.logger.info(f'-> load fingerprint from:{self.fp_path}')
+            fingerprints = torch.load(self.fp_path, map_location="cpu")["fingerprints"]
+        return fingerprints
 
-        self.logger.info(f'-> generating fingerprint using seed_inputs:{seed_inputs.size()}')
-        fingerprint = self.gen_profiling_inputs(seed_inputs=seed_inputs)
-        torch.save(fingerprint, self.fp_path)
-        return fingerprint["inputs"]
-
-    def verify(self, profiling_inputs, use_torch=True, **kwargs):
-        self.logger.info("-> verify ownership...")
-        input_metrics_1 = self.input_metrics(self.model1, profiling_inputs, use_torch=use_torch)
-        input_metrics_2 = self.input_metrics(self.model2, profiling_inputs, use_torch=use_torch)
-        self.logger.info(f'-> input metrics: model1={input_metrics_1} model2={input_metrics_2}')
-
-        result = {}
-        result["ddm"] = self.compute_similarity_with_ddm(profiling_inputs)
-        result["ddv"] = self.compute_similarity_with_ddv(profiling_inputs)
-        self.logger.info(
-            f'-> {self.model1} vs {self.model2} ddm_similarity={result["ddm"]} ddv_similarity={result["ddv"]}')
-        return result
-
-    def compare(self, **kwargs):
-        return self.verify(self.extract(**kwargs))
-
-
-    def none_optimized_compare(self, profiling_inputs, use_torch=True):
-        self.logger.info(f'generating seed inputs')
-        seed_inputs = list(self.get_seed_inputs())
-        np.random.shuffle(seed_inputs)
-        input_metrics_1 = self.input_metrics(self.model1, profiling_inputs, use_torch=use_torch)
-        input_metrics_2 = self.input_metrics(self.model2, profiling_inputs, use_torch=use_torch)
-        self.logger.info(f'-> input metrics: model1={input_metrics_1} model2={input_metrics_2}')
-
-        self.compute_similarity_with_IPGuard(profiling_inputs)
-        self.compute_similarity_with_weight()
-        self.compute_similarity_with_abs_weight()
-        self.compute_similarity_with_bn_weight()
-        self.compute_similarity_with_conv_bn_weight()
-        self.compute_similarity_with_identical_weight()
-        self.compute_similarity_with_whole_weight()
-        self.compute_similarity_with_feature(profiling_inputs)
-        self.compute_similarity_with_last_feature(profiling_inputs)
-        self.compute_similarity_with_last_feature_svd(profiling_inputs)
-        self.compute_similarity_with_ddv(profiling_inputs)
-        self.compute_similarity_with_ddm(profiling_inputs)
+    def verify(self, fingerprints, **kwargs):
+        fingerprints = fingerprints.to(self.device)
+        self.logger.info(f'-> fingerprints inputs generated with shape {fingerprints.shape}')
+        self.logger.info(f'-> computing metrics, DDM')
+        input_metrics_1 = self.input_metrics(self.model1, fingerprints)
+        input_metrics_2 = self.input_metrics(self.model2, fingerprints)
+        self.logger.info(f'  input metrics: model1={input_metrics_1} model2={input_metrics_2}')
+        ddm = self.compute_similarity_with_ddm(fingerprints)
+        ddv = self.compute_similarity_with_ddv(fingerprints)
+        mr = self.compute_similarity_with_IPGuard(fingerprints)
+        dist = {
+            "ddm": ddm,
+            "ddv": ddv,
+            "mr": mr
+        }
+        print(f"-> {self.arch1} vs {self.arch2} seed:{self.seed} dist:{dist}")
+        return dist
 
     def compute_similarity_with_IPGuard(self, profiling_inputs):
         n_pairs = int(len(list(profiling_inputs)) / 2)
         normal_input = profiling_inputs[:n_pairs]
         adv_input = profiling_inputs[n_pairs:]
 
-        out = self.model1.batch_forward(adv_input).to("cpu").numpy()
+        out = self.model1(adv_input).detach().to("cpu").numpy()
         normal_pred = out.argmax(axis=1)
-        out = self.model2.batch_forward(adv_input).to("cpu").numpy()
+        out = self.model2(adv_input).detach().to("cpu").numpy()
         adv_pred = out.argmax(axis=1)
 
         consist = int((normal_pred == adv_pred).sum())
         sim = consist / n_pairs
-        self.logger.info(f'-> model similarity(IPGuard): {sim}')
         return sim
 
     def compute_similarity_with_weight(self):
-        """
-        直接计算所有Conv层的CosineSimilarity
-        :return:
-        """
         name_to_modules = {}
         for name, module in self.model1.torch_model.named_modules():
             if isinstance(module, nn.Conv2d):
@@ -128,19 +116,17 @@ class ModelDiff(Fingerprinting):
         layer_dist = []
         for name, pack in name_to_modules.items():
             weight1, weight2 = pack
+            # print(name, float((weight1==0).sum() / weight1.numel()))
             weight1 = weight1.view(-1)
             weight2 = weight2.view(-1)
             dist = nn.CosineSimilarity(dim=0)(weight1, weight2)
             layer_dist.append(dist.item())
         sim = np.mean(layer_dist)
-        self.logger.info(f'-> model similarity(CosineSimilarity weight): {sim}')
+
+        self.logger.info(f'  model similarity: {sim}')
         return sim
 
     def compute_similarity_with_abs_weight(self):
-        """
-        直接计算所有Conv层的CosineSimilarity
-        :return:
-        """
         name_to_modules = {}
         for name, module in self.model1.torch_model.named_modules():
             if isinstance(module, nn.Conv2d):
@@ -154,7 +140,8 @@ class ModelDiff(Fingerprinting):
             dist = 1 - ((weight1 - weight2)).abs().mean()
             layer_dist.append(dist.item())
         sim = np.mean(layer_dist)
-        self.logger.info(f'-> model similarity(abs weights): {sim}')
+
+        self.logger.info(f'  model similarity: {sim}')
         return sim
 
     def compute_similarity_with_bn_weight(self):
@@ -173,7 +160,8 @@ class ModelDiff(Fingerprinting):
             dist = nn.CosineSimilarity(dim=0)(weight1, weight2)
             layer_dist.append(dist.item())
         sim = np.mean(layer_dist)
-        self.logger.info(f'-> model similarity(bn_weight): {sim}')
+
+        self.logger.info(f'  model similarity: {sim}')
         return sim
 
     def compute_similarity_with_conv_bn_weight(self):
@@ -192,14 +180,11 @@ class ModelDiff(Fingerprinting):
             dist = nn.CosineSimilarity(dim=0)(weight1, weight2)
             layer_dist.append(dist.item())
         sim = np.mean(layer_dist)
-        self.logger.info(f'-> model similarity(conv_bn_weight): {sim}')
+
+        self.logger.info(f'  model similarity: {sim}')
         return sim
 
     def compute_similarity_with_identical_weight(self):
-        """
-        计算所有Conv层相同数值的数量
-        :return:
-        """
         name_to_modules = {}
         for name, module in self.model1.torch_model.named_modules():
             if isinstance(module, nn.Conv2d):
@@ -213,12 +198,13 @@ class ModelDiff(Fingerprinting):
             identical = (weight1 == weight2).sum()
             dist = float(identical / weight1.numel())
             layer_dist.append(dist)
+
         sim = np.mean(layer_dist)
-        self.logger.info(f'-> model similarity(identical_weight): {sim}')
+
+        self.logger.info(f'  model similarity: {sim}')
         return sim
 
     def compute_similarity_with_whole_weight(self):
-        print("-> compute_similarity_with_whole_weight")
         name_to_modules = {}
         for name, module in self.model1.torch_model.named_modules():
             if isinstance(module, nn.Conv2d):
@@ -231,180 +217,165 @@ class ModelDiff(Fingerprinting):
             weight1, weight2 = pack
             if (weight1 == weight2).all():
                 continue
-            weight1 = weight1.cpu().view(-1)
-            weight2 = weight2.cpu().view(-1)
+            weight1 = weight1.view(-1)
+            weight2 = weight2.view(-1)
             model1_weight.append(weight1)
             model2_weight.append(weight2)
         model1_weight = torch.cat(model1_weight)
         model2_weight = torch.cat(model2_weight)
         sim = nn.CosineSimilarity(dim=0)(model1_weight, model2_weight).item()
-        self.logger.info(f'-> model similarity(whole_weight): {sim}')
+
+        self.logger.info(f'  model similarity: {sim}')
         return sim
 
     def compute_similarity_with_feature(self, profiling_inputs):
-        print("-> compute_similarity_with_feature")
         # Used to matching features
-        # same to DeepJudge "Layer Outputs Distance, LOD"
         def record_act(self, input, output):
             self.out = output
 
-        try:
-            handle1_list = []
-            handle2_list = []
-            name_to_modules = {}
-            for name, module in self.model1.torch_model.named_modules():
-                if isinstance(module, nn.Conv2d):
-                    name_to_modules[name] = [module]
-                    handle2_list.append(module.register_forward_hook(record_act))
-            for name, module in self.model2.torch_model.named_modules():
-                if isinstance(module, nn.Conv2d):
-                    name_to_modules[name].append(module)
-                    handle2_list.append(module.register_forward_hook(record_act))
-            self.model1.batch_forward(profiling_inputs)
-            self.model2.batch_forward(profiling_inputs)
+        name_to_modules = {}
+        for name, module in self.model1.torch_model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                name_to_modules[name] = [module]
+                module.register_forward_hook(record_act)
+        for name, module in self.model2.torch_model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                name_to_modules[name].append(module)
+                module.register_forward_hook(record_act)
+        # print(name_to_modules.keys())
+        self.model1(profiling_inputs)
+        self.model2(profiling_inputs)
 
-            feature_dists = []
-            b = profiling_inputs.shape[0]
-            for idx, (name, pack) in enumerate(name_to_modules.items()):
-                module1, module2 = pack
-                feature1 = module1.out.view(-1)
-                feature2 = module2.out.view(-1)
-                dist = nn.CosineSimilarity(dim=0)(feature1, feature2).item()
-                feature_dists.append(dist)
-                del module1.out, module2.out, feature1, feature2
-                handle1_list[idx].remove()
-                handle2_list[idx].remove()
-            sim = np.mean(feature_dists)
-            self.logger.info(f'-> model similarity (feature): {sim}')
-            return sim
-        except Exception as e:
-            print(f"-> func:compute_similarity_with_feature error:{e} ")
-
-    def compute_similarity_with_last_feature(self, profiling_inputs):
-        print("-> compute_similarity_with_last_feature")
-        def record_act(self, input, output):
-            self.out = output
-
-        try:
-            for name, module in self.model1.torch_model.named_modules():
-                if isinstance(module, nn.Conv2d):
-                    module1 = module
-            for name, module in self.model2.torch_model.named_modules():
-                if isinstance(module, nn.Conv2d):
-                    module2 = module
-            handle1 = module1.register_forward_hook(record_act)
-            handle2 = module2.register_forward_hook(record_act)
-            self.model1.batch_forward(profiling_inputs)
-            self.model2.batch_forward(profiling_inputs)
+        feature_dists = []
+        b = profiling_inputs.shape[0]
+        for name, pack in name_to_modules.items():
+            module1, module2 = pack
             feature1 = module1.out.view(-1)
             feature2 = module2.out.view(-1)
-            sim = nn.CosineSimilarity(dim=0)(feature1, feature2).item()
-
-            handle1.remove()
-            handle2.remove()
+            dist = nn.CosineSimilarity(dim=0)(feature1, feature2).item()
+            feature_dists.append(dist)
             del module1.out, module2.out, feature1, feature2
-            self.logger.info(f'-> model similarity (last_feature): {sim}')
-            return sim
-        except Exception as e:
-            print(f"-> func:compute_similarity_with_last_feature error:{e} ")
+        sim = np.mean(feature_dists)
+
+        self.logger.info(f'  model similarity: {sim}')
+        return sim
+
+    def compute_similarity_with_last_feature(self, profiling_inputs):
+        # Used to matching features
+        def record_act(self, input, output):
+            self.out = output
+
+        name_to_modules = {}
+        for name, module in self.model1.torch_model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                module1 = module
+        for name, module in self.model2.torch_model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                module2 = module
+        module1.register_forward_hook(record_act)
+        module2.register_forward_hook(record_act)
+        # print(name_to_modules.keys())
+        self.model1(profiling_inputs)
+        self.model2(profiling_inputs)
+
+        feature1 = module1.out.view(-1)
+        feature2 = module2.out.view(-1)
+        dist = nn.CosineSimilarity(dim=0)(feature1, feature2).item()
+        del module1.out, module2.out, feature1, feature2
+        sim = dist
+
+        self.logger.info(f'  model similarity: {sim}')
+        return sim
 
     def compute_similarity_with_last_feature_svd(self, profiling_inputs):
         # Used to matching features
         def record_act(self, input, output):
             self.out = output
 
-        try:
-            for name, module in self.model1.torch_model.named_modules():
-                if isinstance(module, nn.Conv2d):
-                    module1 = module
-            for name, module in self.model2.torch_model.named_modules():
-                if isinstance(module, nn.Conv2d):
-                    module2 = module
-            handle1 = module1.register_forward_hook(record_act)
-            handle2 = module2.register_forward_hook(record_act)
+        name_to_modules = {}
+        for name, module in self.model1.torch_model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                module1 = module
+        for name, module in self.model2.torch_model.named_modules():
+            if isinstance(module, nn.Conv2d):
+                module2 = module
+        module1.register_forward_hook(record_act)
+        module2.register_forward_hook(record_act)
+        # print(name_to_modules.keys())
+        self.model1(profiling_inputs)
+        self.model2(profiling_inputs)
 
-            self.model1.batch_forward(profiling_inputs)
-            self.model2.batch_forward(profiling_inputs)
-            feature1 = module1.out
-            feature2 = module2.out
-            b, c, _, _ = feature1.shape
-            feature1 = feature1.clone().cpu().view(b, c, -1)
-            feature2 = feature2.clone().cpu().view(b, c, -1)
-            # for i in range(b):
-            #    u1,s1,v1 = torch.svd(feature1[i])
-            #    u2,s2,v2 = torch.svd(feature2[i])
-            sim = nn.CosineSimilarity(dim=0)(feature1.view(-1), feature2.view(-1)).item()
+        feature1 = module1.out
+        feature2 = module2.out
+        b, c, _, _ = feature1.shape
+        feature1 = feature1.view(b, c, -1)
+        feature2 = feature2.view(b, c, -1)
+        for i in range(b):
+            u1, s1, v1 = torch.svd(feature1[i])
+            u2, s2, v2 = torch.svd(feature2[i])
+            st()
+        dist = nn.CosineSimilarity(dim=0)(feature1, feature2).item()
+        del module1.out, module2.out, feature1, feature2
+        sim = dist
 
-            handle1.remove()
-            handle2.remove()
-            del module1.out, module2.out, feature1, feature2
-            self.logger.info(f'-> model similarity (last_feature_svd): {sim}')
-            return sim
-        except Exception as e:
-            print(f"-> func:compute_similarity_with_last_feature_svd error:{e} ")
+        self.logger.info(f'  model similarity: {sim}')
+        return sim
+
+    @staticmethod
+    def normalize(v):
+        norm = np.linalg.norm(v)
+        if norm == 0:
+            return v
+        return v / norm
 
     def compute_similarity_with_ddv(self, profiling_inputs):
         ddv1 = self.compute_ddv(self.model1, profiling_inputs)
         ddv2 = self.compute_ddv(self.model2, profiling_inputs)
-        ddv1 = ops.normalize(np.array(ddv1))
-        ddv2 = ops.normalize(np.array(ddv2))
-        self.logger.debug(f'-> ddv1={ddv1}\n ddv2={ddv2}')
+
+        ddv1 = self.normalize(np.array(ddv1))
+        ddv2 = self.normalize(np.array(ddv2))
         ddv_distance = self.compare_ddv(ddv1, ddv2)
         model_similarity = 1 - ddv_distance
-        self.logger.info(f'-> model similarity(ddv): {model_similarity}')
         return model_similarity
 
     def compute_ddv(self, model, inputs):
         dists = []
-        outputs = model.batch_forward(inputs).to('cpu').numpy()
+        outputs = model(inputs).detach().to('cpu').numpy()
+        self.logger.debug(f'{model}: \n profiling_outputs={outputs.shape}\n{outputs}\n')
         n_pairs = int(len(list(inputs)) / 2)
         for i in range(n_pairs):
             ya = outputs[i]
             yb = outputs[i + n_pairs]
-            #           dist = spatial.distance.euclidean(ya, yb)
             dist = spatial.distance.cosine(ya, yb)
             dists.append(dist)
         return np.array(dists)
 
     def compute_similarity_with_ddm(self, profiling_inputs):
-        """
-        ddm 为各个样本之间输出相似性矩阵，用这个矩阵再算两个模型相似性矩阵
-        :param profiling_inputs:
-        :return:
-        """
         ddm1 = self.compute_ddm(self.model1, profiling_inputs)
         ddm2 = self.compute_ddm(self.model2, profiling_inputs)
         ddm_distance = ModelDiff.mtx_similar1(ddm1, ddm2)
         model_similarity = 1 - ddm_distance
-        self.logger.info(f'-> model similarity(ddm): {model_similarity}')
+
+        self.logger.info(f'  model similarity: {model_similarity}')
         return model_similarity
 
     def compute_ddm(self, model, inputs):
-        outputs = model.batch_forward(inputs).to('cpu').numpy()
+        outputs = model(inputs).detach().to('cpu').numpy()
         # outputs = outputs[:, :10]
         outputs_list = list(outputs)
         ddm = spatial.distance.cdist(outputs_list, outputs_list)
         return ddm
 
-    def compute_actative(self, profiling_inputs, theta=0.5):
-        pass
-
     @staticmethod
     def metrics_output_diversity(model, inputs, use_torch=False):
-        outputs = model.batch_forward(inputs).to('cpu').numpy()
-        #         output_dists = []
-        #         for i in range(0, len(outputs) - 1):
-        #             for j in range(i + 1, len(outputs)):
-        #                 output_dist = spatial.distance.euclidean(outputs[i], outputs[j])
-        #                 output_dists.append(output_dist)
-        #         diversity = sum(output_dists) / len(output_dists)
-        output_dists = spatial.distance.cdist(list(outputs), list(outputs), p=2.0)
+        outputs = model(inputs)
+        output_dists = torch.cdist(outputs, outputs, p=2.0).detach().cpu().numpy()
         diversity = np.mean(output_dists)
         return diversity
 
     @staticmethod
     def metrics_output_variance(model, inputs, use_torch=False):
-        batch_output = model.batch_forward(inputs).to('cpu').numpy()
+        batch_output = model(inputs).to('cpu').numpy()
         mean_axis = tuple(list(range(len(batch_output.shape)))[2:])
         batch_output_mean = np.mean(batch_output, axis=mean_axis)
         # print(batch_output_mean.shape)
@@ -414,7 +385,7 @@ class ModelDiff(Fingerprinting):
 
     @staticmethod
     def metrics_output_range(model, inputs, use_torch=False):
-        batch_output = model.batch_forward(inputs).to('cpu').numpy()
+        batch_output = model(inputs).to('cpu').numpy()
         mean_axis = tuple(list(range(len(batch_output.shape)))[2:])
         batch_output_mean = np.mean(batch_output, axis=mean_axis)
         output_ranges = np.max(batch_output_mean, axis=0) - np.min(batch_output_mean, axis=0)
@@ -422,12 +393,12 @@ class ModelDiff(Fingerprinting):
 
     @staticmethod
     def metrics_neuron_coverage(model, inputs, use_torch=False):
-        module_irs = model.batch_forward_with_ir(inputs)
+        module_irs = model(inputs)
         neurons = []
         neurons_covered = []
         for module in module_irs:
             ir = module_irs[module]
-            # self.logger.info(f'{tensor["name"]} {batch_tensor_value.shape}')
+            # print(f'{tensor["name"]} {batch_tensor_value.shape}')
             # if 'relu' not in tensor["name"].lower():
             #     continue
             squeeze_axis = tuple(list(range(len(ir.shape)))[:-1])
@@ -440,13 +411,13 @@ class ModelDiff(Fingerprinting):
                 if covered:
                     neurons_covered.append(neuron_name)
         neurons_not_covered = [neuron for neuron in neurons if neuron not in neurons_covered]
-        ModelDiff.logger.info(f'{len(neurons_not_covered)} neurons not covered: {neurons_not_covered}')
+        print(f'{len(neurons_not_covered)} neurons not covered: {neurons_not_covered}')
         return float(len(neurons_covered)) / len(neurons)
 
     @staticmethod
     def _compute_decision_dist_output_cos(model, xa, xb):
-        ya = model.batch_forward(xa)
-        yb = model.batch_forward(xb)
+        ya = model(xa)
+        yb = model(xb)
         return spatial.distance.cosine(ya, yb)
 
     @staticmethod
@@ -466,108 +437,68 @@ class ModelDiff(Fingerprinting):
     #         x[random_index] = 1
     #         yield x
 
-
-    def gen_profiling_inputs_search(self, seed_inputs, use_torch=False, epsilon=0.2):
+    def _gen_profiling_inputs_search(self, seed_inputs, epsilon=0.2, max_iterations=1000):
         input_shape = seed_inputs[0].shape
         n_inputs = seed_inputs.shape[0]
-        max_iterations = 1000
-        model1 = self.model1()
-        model2 = self.model2
-        ndims = np.prod(input_shape)
 
-        initial_outputs1 = model1.batch_forward(seed_inputs).to('cpu').numpy()
-        initial_outputs2 = model2.batch_forward(seed_inputs).to('cpu').numpy()
-        self.logger.info(f"-> initial_outputs1:{initial_outputs1.shape} ndims:{ndims}")
-        device = helper.get_args().device
+        seed_inputs = seed_inputs.to(self.device)
+        model1 = self.model1.to(self.device)
+        model2 = self.model2.to(self.device)
+        ndims = np.prod(input_shape)
+        initial_outputs1 = model1(seed_inputs).detach().to('cpu')
+        initial_outputs2 = model2(seed_inputs).detach().to('cpu')
 
         def evaluate_inputs(inputs):
-            outputs1 = model1.batch_forward(inputs).to('cpu').numpy()
-            outputs2 = model2.batch_forward(inputs).to('cpu').numpy()
-
-            # diversity𝑓
+            inputs = inputs.to(self.device)
             metrics1 = self.input_metrics(self.model1, inputs)
             metrics2 = self.input_metrics(self.model2, inputs)
 
-            # divergence𝑓
-            output_dist1 = np.mean(spatial.distance.cdist(
-                list(outputs1),
-                list(initial_outputs1),
-                p=2).diagonal())
-            output_dist2 = np.mean(spatial.distance.cdist(
-                list(outputs2),
-                list(initial_outputs2),
-                p=2).diagonal())
-            self.logger.info(f'-> output distance: {output_dist1},{output_dist2}')
-            self.logger.info(f'-> metrics: {metrics1},{metrics2}')
-            return output_dist1 * output_dist2 * metrics1 * metrics2, outputs1, outputs2
+            outputs1 = model1(inputs).detach().to('cpu')
+            outputs2 = model2(inputs).detach().to('cpu')
+            output_dist1 = torch.mean(torch.diagonal(torch.cdist(outputs1, initial_outputs1, p=2))).numpy()
+            output_dist2 = torch.mean(torch.diagonal(torch.cdist(outputs2, initial_outputs2, p=2))).numpy()
+            return output_dist1 * output_dist2 * metrics1 * metrics2
 
         inputs = seed_inputs
-        score, outputs1, outputs2 = evaluate_inputs(inputs)
-        self.logger.info(f"-> outputs1:{outputs1.shape}, outputs2:{outputs2.shape} score:{score}")
-        cache_scores = np.zeros([max_iterations + 1])
-        cache_predicts = [
-            np.zeros([int(max_iterations / 10) + 1, outputs1.shape[0], outputs1.shape[1]]),
-            np.zeros([int(max_iterations / 10) + 1, outputs2.shape[0], outputs2.shape[1]])
-        ]
-        cache_scores[0] = score
-        cache_predicts[0][0] = outputs1
-        cache_predicts[1][0] = outputs2
-        cache_data = {
-            "step": 0,
-            "scores": cache_scores,
-            "outputs": cache_predicts,
-        }
-        cache_path = osp.join(self.cache_root, f"out_{self.arch1}_{self.arch2}.pt")
-        for i in range(1, 1 + max_iterations):
-            self.logger.info(f'-> mutation {i}-th iteration: {model1} vs {model2}')
-            # 随机选修改位置
+        score = evaluate_inputs(inputs)
+
+        for step in range(max_iterations):
+            #comparator._compute_distance(inputs)
+            # mutation_idx = random.randint(0, len(inputs))
+            # mutation = np.random.random_sample(size=input_shape).astype(np.float32)
+
             mutation_pos = np.random.randint(0, ndims)
             mutation = np.zeros(ndims).astype(np.float32)
             mutation[mutation_pos] = epsilon
             mutation = np.reshape(mutation, input_shape)
 
-            # 随机选修改样本
             mutation_batch = np.zeros(shape=inputs.shape).astype(np.float32)
             mutation_idx = np.random.randint(0, n_inputs)
             mutation_batch[mutation_idx] = mutation
+            mutation_batch = torch.from_numpy(mutation_batch).to(self.device)
 
-            # 计算边界 & 选择最优
             mutate_right_inputs = inputs + mutation_batch
-            mutate_right_score, _, _ = evaluate_inputs(mutate_right_inputs)
+            mutate_right_score = evaluate_inputs(mutate_right_inputs)
             mutate_left_inputs = inputs - mutation_batch
-            mutate_left_score, _, _ = evaluate_inputs(mutate_left_inputs)
+            mutate_left_score = evaluate_inputs(mutate_left_inputs)
+
             if mutate_right_score <= score and mutate_left_score <= score:
+                if step % 50 == 0:
+                    print(f"-> bypass:{step} epsilon:{epsilon}  left_score:{mutate_left_score} score:{score} right_score:{mutate_right_score}")
                 continue
+
             if mutate_right_score > mutate_left_score:
-                self.logger.info(f'-> mutate right: {score}->{mutate_right_score}')
-                inputs = mutate_right_inputs
+                #print(f'-> gen_inputs [{i}/{max_iterations}] mutate right: {score}->{mutate_right_score}')
+                inputs = mutate_right_inputs.detach().to(self.device)
                 score = mutate_right_score
             else:
-                self.logger.info(f'-> mutate left: {score}->{mutate_left_score}')
-                inputs = mutate_left_inputs
+                #print(f'-> gen_inputs [{i}/{max_iterations}] mutate left: {score}->{mutate_left_score}')
+                inputs = mutate_left_inputs.detach().to(self.device)
                 score = mutate_left_score
-            cache_scores[i] = score
 
-            # save fingerprint
-            if i % 20 == 0:
-                step = int(i / 10)
-                score, outputs1, outputs2 = evaluate_inputs(inputs)
-                cache_predicts[0][step] = outputs1
-                cache_predicts[1][step] = outputs2
-                cache_data = {
-                    "step": i,
-                    "scores": cache_scores,
-                    "outputs": cache_predicts.clone().detach().cpu(),
-                }
-                fingerprint = {
-                    "step": i,
-                    "scores": cache_scores,
-                    "inputs": inputs.clone().detach().cpu()
-                }
-                torch.save(fingerprint, self.fp_path)
-                torch.save(cache_data, cache_path)
-            print(f"-> step:{i}: {model1} vs {model2} on {device}\n\n")
-        return fingerprint
+            if step % 50 == 0:
+                print(f"-> gen_inputs [{step}/{max_iterations}] epsilon:{epsilon} score:{score}")
+        return inputs
 
     @staticmethod
     def _compare_ddv_cos(ddv1, ddv2):
@@ -641,117 +572,88 @@ class ModelDiff(Fingerprinting):
         return similar
 
 
+def parse_args():
+    """
+    Parse command line input
+    :return:
+    """
+    parser = argparse.ArgumentParser(description="Compare similarity between two models.")
+
+    parser.add_argument("-benchmark_dir", action="store", dest="benchmark_dir",
+                        required=False, default=".", help="Path to the benchmark.")
+    parser.add_argument("-model1", action="store", dest="model1",
+                        required=True, help="model 1.")
+    parser.add_argument("-model2", action="store", dest="model2",
+                        required=True, help="model 2.")
+    args, unknown = parser.parse_known_args()
+    return args
+
+
+def evaluate_micro_benchmark():
+    lines = pathlib.Path('benchmark_models/model_pairs.txt').read_text().splitlines()
+    eval_lines = []
+    for line in lines:
+        model1_str = line.split()[0]
+        model2_str = line.split()[2]
+        model1_path = os.path.join('benchmark_models', f'{model1_str}.h5')
+        model2_path = os.path.join('benchmark_models', f'{model2_str}.h5')
+        model1 = Model(model1_path)
+        model2 = Model(model2_path)
+        comparison = ModelDiff(model1, model2)
+        similarity = comparison.compare()
+        eval_line = f'{model1_str} {model2_str} {similarity}'
+        eval_lines.append(eval_line)
+        print(eval_line)
+    pathlib.Path('benchmark_models/model_pairs_eval.txt').write_text('\n'.join(eval_lines))
+
+
 def get_args():
     parser = argparse.ArgumentParser(description="Build micro benchmark.")
-    parser.add_argument("-datasets_dir", action="store", dest="datasets_dir", default=osp.join(ROOT, "dataset/data"),
+    parser.add_argument("-datasets_dir", action="store", dest="datasets_dir", default=osp.join(helper.ROOT, "dataset/data"),
                         help="Path to the dir of datasets.")
-    parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(ROOT, "model/ckpt"),
+    parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(helper.ROOT, "model/ckpt"),
                         help="Path to the dir of benchmark models.")
     parser.add_argument("-model1", action="store", dest="model1", default="pretrain(resnet18,ImageNet)-",
                         required=True, help="model 1.")
     parser.add_argument("-model2", action="store", dest="model2",
                         default="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-", required=True, help="model 2.")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
+    parser.add_argument("-seed_method", action="store", default="PGD", type=str, choices=["FGSM", "PGD", "CW"], help="Type of blackbox generation")
     parser.add_argument("-batch_size", action="store", default=200, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=999, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
-    args.ROOT = ROOT
-    args.namespace = format_time
+    args.ROOT = helper.ROOT
     args.out_root = osp.join(args.ROOT, "output")
     args.logs_root = osp.join(args.ROOT, "logs")
-    args.fingerprint_root = osp.join(args.out_root, "IPGuard")
+    args.modeldiff_root = osp.join(args.out_root, "ModelDiff")
     return args
 
 
-
-def multiple_pairs(args, benchmark, logger):
-    model1 = None
-    model_strs = []
-    for model_wrapper in benchmark.list_models():
-        if not model_wrapper.torch_model_exists():
-            continue
-        if model_wrapper.__str__() == args.model1:
-            model1 = model_wrapper
-        model_strs.append(model_wrapper.__str__())
-    if model1 is None:
-        logger.info(f'-> model1 not found: {model1} {args.model1}')
-        return
-
-    for model2 in benchmark.list_models():
-        device = args.device
-        if str(model1) != str(model2):
-            if "quantize" in str(model1) or "quantize" in str(model2):
-                device = torch.device("cpu")
-            modeldiff = ModelDiff(model1, model2, out_root=args.modeldiff_root, device=device)
-            ddm, ddv = modeldiff.compare()
-            logger.info(f'-> the similarity is: ddm={ddm}, ddv={ddv}')
-            del modeldiff, ddm, ddv, model2
-        print()
-
-
-def single_pairs(args, benchmark, logger):
-    from dataset import loader as dloader
-    model1 = benchmark.load_wrapper(args.model1, seed=1000)
-    model2 = benchmark.load_wrapper(args.model2, seed=args.seed)
-
-    if "quantize" in str(model1) or "quantize" in str(model2):
-        args.device = torch.device("cpu")
-    test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id)
-
-    modeldiff = ModelDiff(model1, model2, test_loader=test_loader, device=args.device, out_root=args.modeldiff_root, seed=args.seed)
-    similarity = modeldiff.compare()
-    logger.info(f'-> the similarity is {similarity}')
-
-
-
-
 def main(args):
-    filename = str(os.path.basename(__file__)).split(".")[0]
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
-                        )  # filename=f"{args.logs_root}/{filename}_{args.namespace}.txt")
-    benchmark = ImageBenchmark(
-        datasets_dir=args.datasets_dir,
-        models_dir=args.models_dir
-    )
-    logger = logging.getLogger('ModelDiff')
-    single_pairs(args, benchmark, logger)
+    from benchmark import ImageBenchmark
+    from dataset import loader
+
+    #filename = str(osp.basename(__file__)).split(".")[0]
+    #logging.basicConfig(level=logging.INFO,
+    #                    format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s")
+    benchmark = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
+
+    model1 = benchmark.load_wrapper(args.model1, seed=args.seed).torch_model(seed=args.seed)
+    model2 = benchmark.load_wrapper(args.model2, seed=args.seed).torch_model(seed=args.seed)
+    test_loader = loader.get_dataloader(model1.dataset_id, batch_size=args.batch_size)
+
+    if "quantize" in str(args.model1) or "quantize" in str(args.model2):
+        args.device = torch.device("cpu")
+
+    out_root = osp.join(args.out_root, "ModelDiff")
+    modeldiff = ModelDiff(model1, model2, test_loader=test_loader,
+                          device=args.device, seed=args.seed,
+                          out_root=out_root)
+    dist = modeldiff.verify(modeldiff.extract())
 
 
 if __name__ == '__main__':
-    from benchmark import ImageBenchmark
-    args = helper.get_args()
-    args.modeldiff_root = osp.join(args.out_root, "ModelDiff")
-    main(args)
-
-    """
-        Example command:
-        <===========================  Flower102-resnet18  ===========================>
-        model1="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-"
-        python -m "defense.modeldiff" -model1 $model1 -model2 "train(resnet18,Flower102)-" -device 0
-        python -m "defense.modeldiff" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-distill()-" -device 0
-        python -m "defense.modeldiff" -model1 $model1 -model2 "pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-stealthnet(0.7,20)-" -device 0
-        
-        <===========================  Flower102-mbnetv2  ===========================>
-        model1="pretrain(mbnetv2,ImageNet)-transfer(Flower102,0.1)-"
-        python -m "defense.modeldiff" -model1 $model1 -model2 "train(mbnetv2,Flower102)-" -device 1
-        python -m "defense.modeldiff" -model1 $model1 -model2 "pretrain(mbnetv2,ImageNet)-transfer(Flower102,0.1)-distill()-" -device 1
-        
-    """
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    args = get_args()
+    for seed in [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]:
+        args.seed = seed
+        main(args)

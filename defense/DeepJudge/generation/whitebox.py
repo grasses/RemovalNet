@@ -84,7 +84,7 @@ class WhiteboxSeeding(BaseSeeding):
                     optimizer.step()
                     if -cost.item() > k + alpha:
                         tests[(layer_index, idx)].append(x_.detach().cpu())
-                        phar.set_description(f"-> Whitebox [{sample_idx + 1}/{len(seed_x)}], iter:{iter} neurons:{idx} cost:{-cost.item()} > k:{k+alpha}")
+                        phar.set_description(f"-> Whitebox-L{layer_index} [{sample_idx + 1}/{len(seed_x)}], iter:{iter} neurons:{idx} cost:{-cost.item()} > k:{k+alpha}")
                         break
 
         for idx in neurons_idxs:
@@ -95,6 +95,6 @@ class WhiteboxSeeding(BaseSeeding):
         for k, v in tests.items():
             tests[k] = v[:min_size]
 
-        self.save_test_samples(seed_x=seed_x, seed_y=seed_y, test_x=tests, test_y=[], tag="whitebox")
+        self.save_test_samples(seed_x=seed_x, seed_y=seed_y, test_x=tests, test_y=[], tag=f"whitebox-L{layer_index}")
         self.logger.info(f"-> generate whitebox test samples done! size:{len(tests)}")
         return tests

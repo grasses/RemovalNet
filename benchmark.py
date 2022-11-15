@@ -11,7 +11,7 @@ import torch
 import numpy as np
 from model import loader as mloader
 from dataset import loader as dloader
-from utils import helper, ops, metric
+from utils import helper, metric
 from attack.finetuner import Finetuner
 from attack.trainer import Trainer
 from attack.weight_pruner import WeightPruner
@@ -113,7 +113,7 @@ class ModelWrapper:
         """
         if os.path.exists(self.ckpt_path):
             ckpt = torch.load(self.ckpt_path, map_location="cpu")
-            torch_model.load_state_dict(ckpt['state_dict'])
+            torch_model.load_state_dict(ckpt['state_dict'], state_dict=True)
             self.logger.info('load_saved_weights: loaded a previous checkpoint')
         else:
             self.logger.info('load_saved_weights: no previous checkpoint found')
@@ -132,8 +132,9 @@ class ModelWrapper:
             dtype = params[0]
             dtype = torch.qint8 if dtype == 'qint8' else torch.float16
             torch_model = torch.quantization.quantize_dynamic(torch_model, dtype=dtype)
+        print(f"-> load model from:{self.ckpt_path}")
         ckpt = torch.load(self.ckpt_path, map_location="cpu")
-        torch_model.load_state_dict(ckpt['state_dict'])
+        torch_model.load_state_dict(ckpt['state_dict'], strict=True)
         torch_model.seed = self.seed
         torch_model.task = self.__str__()
         torch_model.arch_id = self.arch_id
@@ -308,8 +309,9 @@ class ModelWrapper:
             cfg.network = arch_id
             cfg.steal = True
             cfg.reinit = True
-            cfg.steal_alpha = 0.002
-            cfg.temperature = 10
+            cfg.lr = 1e-2
+            cfg.steal_alpha = 0.5
+            cfg.temperature = 1.0
             cfg.weight_decay = 5e-3
             cfg.momentum = 0.9
             if CONTINUE_TRAIN:
@@ -334,14 +336,14 @@ class ModelWrapper:
             cfg.network = arch_id
             cfg.negative = True
             cfg.reinit = True
+            cfg.lr = 1e-2
             cfg.weight_decay = 5e-3
             cfg.momentum = 0.9
             cfg.backends = False
             finetuner = Trainer(
                 cfg,
                 student_model, teacher_model,
-                train_loader, test_loader,
-                init_models=False
+                train_loader, test_loader
             )
             finetuner.train()
             self.save_torch_model(student_model, seed=seed)
@@ -524,7 +526,7 @@ class ImageBenchmark:
             elif gen_type == "finetune":
                 target_model = target_model.finetune(dataset_id=params[0], tune_ratio=params[1], seed=seed, **kwargs)
             elif gen_type == "distill":
-                target_model = target_model.distill(tune_ratio=params[0], seed=seed, **kwargs)
+                target_model = target_model.distill(retrain_ratio=params[0], seed=seed, **kwargs)
             elif gen_type == "prune":
                 target_model = target_model.prune(params[0], seed=seed, **kwargs)
             elif gen_type == "quantize":
@@ -540,7 +542,6 @@ class ImageBenchmark:
         self.logger.info(f"-> load model: {target_model}")
         return target_model
 
-
     def list_models(self, cfg, fc=True, methods=["negative", "finetune", "distill", "steal", "prune"]):
         """
         list the models in the benchmark dataset
@@ -548,12 +549,16 @@ class ImageBenchmark:
         """
         source_models = []
         quantization_dtypes = ['qint8', 'float16']
-        prune_ratios = [0.8, 0.5, 0.2]
+        prune_ratios = [0.2, 0.5, 0.8]
         finetune_ratios = [0.2, 0.5, 0.8]
         distill_ratios = [1.0]
+        #seeds = [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
         seeds = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
-        #seeds += [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
-        #seeds = [1700, 1800, 1900, 2000]
+        seeds1 = [100, 200, 300, 400, 500]
+        seeds2 = [600, 700, 800, 900, 1000]
+        seeds3 = [1100, 1200, 1300, 1400, 1500]
+        seeds4 = [1600, 1700, 1800, 1900, 2000]
+        #seeds = seeds4
 
         # train source models
         source_models = []
@@ -631,8 +636,8 @@ def get_args():
     args.logs_root = osp.join(args.ROOT, "logs")
     args.modeldiff_root = osp.join(args.out_root, "modeldiff")
     args.archs = {
-        "CIFAR10": ["vgg16_bn", "resnet34"],
-        "ImageNet": ["vgg16_bn", "resnet50"],
+        "CIFAR10": ["mobilenet_v2"], #"resnet50", "resnet34", "vgg16_bn"],
+        "ImageNet": ["resnet50"]#["mobilenet_v2", "resnet50", "vgg16_bn", "densenet121"],
     }
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
     helper.set_default_seed(seed=args.seed)
@@ -657,7 +662,7 @@ def gen_model():
         datasets=[dataset],
         datasets_dir=args.datasets_dir,
         models_dir=args.models_dir)
-    models = bench.list_models(cfg=cfg, methods=["distill"])
+    models = bench.list_models(cfg=cfg, methods=["prune", "finetune", "quantize"]) #"prune", "finetune", "quantize", "steal", "distill", "negative"])
     for idx, model in enumerate(models):
         logger.info(f"-> idx:{idx} runing for model:{model} seed:{model.seed}")
         model.gen_model(seed=model.seed)

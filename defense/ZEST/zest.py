@@ -12,6 +12,7 @@ import torch
 import os.path as osp
 import numpy as np
 from tqdm import tqdm
+from multiprocessing import Process, Queue, Pool
 from benchmark import ImageBenchmark
 from defense import Fingerprinting
 from lime.wrappers.scikit_image import SegmentationAlgorithm
@@ -35,12 +36,12 @@ class ZEST(Fingerprinting):
         if not osp.exists(out_root):
             os.makedirs(out_root)
         self.out_root = out_root
+        self.fp_path = osp.join(self.fingerprint_root, f"{self.model1.task}_{self.model2.task}_s{self.model2.seed}.pt")
 
     def extract(self, cache=True, **kwargs):
-        path = osp.join(self.fingerprint_root, f"{self.model1.task}_{self.model2.task}.pt")
-        if cache and osp.exists(path):
-            fingerprint = torch.load(path, map_location="cpu")
-            self.logger.info(f"-> load cache from: {path}")
+        if cache and osp.exists(self.fp_path):
+            fingerprint = torch.load(self.fp_path, map_location="cpu")
+            self.logger.info(f"-> load cache from: {self.fp_path}")
         else:
             self.logger.info(f'-> [compare] step1: generating lime_data')
             ref_data, unnormalize_ref_data = self.compute_seed_samples()
@@ -56,8 +57,8 @@ class ZEST(Fingerprinting):
                 "lime_mask1": lime_mask1,
                 "lime_mask2": lime_mask2
             }
-            self.logger.info(f"-> save cache to: {path}")
-        torch.save(fingerprint, path)
+            self.logger.info(f"-> save cache to: {self.fp_path}")
+        torch.save(fingerprint, self.fp_path)
         return fingerprint
 
     def verify(self, fingerprint, **kwargs):
@@ -85,6 +86,7 @@ class ZEST(Fingerprinting):
         temp = []
         if ref_data.shape[1] == 3:
             ref_data = np.moveaxis(ref_data, 1, -1)
+
         segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4, ratio=0.2, max_dist=200)
         phar = tqdm(enumerate(ref_data))
         for idx, image in phar:
@@ -134,13 +136,17 @@ class ZEST(Fingerprinting):
                 inputs = torch.from_numpy(data).permute(0, 3, 1, 2).float()
                 outputs = ops.batch_forward(model, inputs, argmax=False).detach().cpu().numpy()
                 datasets.append([lime_data, outputs])
-                phar.set_description(f"-> [{i}/{len(lime_dataset)}] step4: compute_lime_signature...")
+                phar.set_description(f"-> [{i}/{len(lime_dataset)}] step4.1: compute_lime_signature...")
+
         weights = []
         with torch.no_grad():
-            for data, label in datasets:
-                data, label = torch.from_numpy(data).float().to(self.device), torch.from_numpy(label).float().to(self.device)
+            phar = tqdm(datasets)
+            for data, label in phar:
+                data = torch.from_numpy(data).float().to(self.device)
+                label = torch.from_numpy(label).float().to(self.device)
                 w = torch.chain_matmul(torch.pinverse(torch.matmul(data.T, data)), data.T, label).to("cpu")
                 weights.append(w)
+                phar.set_description(f"-> [{i}/{len(datasets)}] step4.2: compute weights...")
         if cat:
             return torch.cat(weights)
         else:
@@ -236,14 +242,11 @@ class ZEST(Fingerprinting):
 
 def main(args):
     from dataset import loader as dloader
-    filename = str(osp.basename(__file__)).split(".")[0]
     logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
-                        ) #filename=f"{args.logs_root}/{filename}_{args.namespace}.txt")
-
+                        format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s")
     benchmark = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
-    model1 = benchmark.load_wrapper(args.model1, seed=1000).load_torch_model(seed=1000)
-    model2 = benchmark.load_wrapper(args.model2, seed=args.seed).load_torch_model(seed=args.seed)
+    model1 = benchmark.load_wrapper(args.model1, seed=1000).load_torch_model()
+    model2 = benchmark.load_wrapper(args.model2, seed=args.seed).load_torch_model()
     test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id, split="test", batch_size=128)
 
     comparison = ZEST(model1, model2, test_loader=test_loader, out_root=args.zest_root, device=args.device)

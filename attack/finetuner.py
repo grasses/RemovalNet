@@ -50,16 +50,14 @@ class Finetuner(object):
         def record_act(self, input, output):
             self.out = output
 
-        if 'mbnetv2' in args.network or 'mobilenet' in args.network:
-            reg_layers = {0: [model.layer1, teacher.layer1], 1: [model.layer2, teacher.layer2],
-                          2: [model.layer3, teacher.layer3], 3: [model.layer4, teacher.layer4]}
-            model.layer1.register_forward_hook(record_act)
-            model.layer2.register_forward_hook(record_act)
-            model.layer3.register_forward_hook(record_act)
-            model.layer4.register_forward_hook(record_act)
-            if '5' in args.feat_layers:
-                reg_layers[4] = [model.layer5]
-                model.layer5.register_forward_hook(record_act)
+        if 'mobilenet' in args.network:
+            reg_layers = {0: [model.features[10], teacher.features[10]],
+                          1: [model.features[16], teacher.features[16]],
+                          2: [model.features[18], teacher.features[18]]}
+
+            model.features[10].register_forward_hook(record_act)
+            model.features[16].register_forward_hook(record_act)
+            model.features[18].register_forward_hook(record_act)
         elif 'resnet' in args.network:
             reg_layers = {0: [model.layer1, teacher.layer1], 1: [model.layer2, teacher.layer2],
                           2: [model.layer3, teacher.layer3], 3: [model.layer4, teacher.layer4]}
@@ -95,6 +93,7 @@ class Finetuner(object):
             for m in model.modules():
                 if type(m) in [nn.Linear, nn.BatchNorm2d, nn.Conv2d]:
                     m.reset_parameters()
+                    torch.nn.init.xavier_uniform(m.weight)
 
         retrain_linear = self.args.retrain_linear if 'retrain_linear' in self.args else None
         if retrain_linear:
@@ -106,13 +105,10 @@ class Finetuner(object):
             for m in modules[-num_tune_modules:]:
                 m.reset_parameters()
 
-        if 'mbnetv2' in args.network or 'mobilenet' in args.network:
-            teacher.layer1.register_forward_hook(record_act)
-            teacher.layer2.register_forward_hook(record_act)
-            teacher.layer3.register_forward_hook(record_act)
-            teacher.layer4.register_forward_hook(record_act)
-            if '5' in args.feat_layers:
-                teacher.layer5.register_forward_hook(record_act)
+        if 'mobilenet' in args.network:
+            teacher.features[10].register_forward_hook(record_act)
+            teacher.features[16].register_forward_hook(record_act)
+            teacher.features[18].register_forward_hook(record_act)
         elif 'resnet' in args.network:
             teacher.layer1.register_forward_hook(record_act)
             teacher.layer2.register_forward_hook(record_act)
@@ -201,7 +197,7 @@ class Finetuner(object):
             feat_loss = regloss.item()
 
         beta_loss, linear_norm = ops.linear_l2(model, args.beta)
-        loss = loss + beta_loss 
+        loss = loss + beta_loss
         linear_loss = beta_loss.item()
 
         if l2sp_lmda != 0:
@@ -355,7 +351,7 @@ class Finetuner(object):
         if l2sp_lmda == 0:
             optimizer = torch.optim.SGD(
                 model_params, 
-                lr=lr * (1 + 0.5 * random.random()),
+                lr=lr * (1 + random.random()),
                 momentum=args.momentum,
                 weight_decay=args.weight_decay,
             )

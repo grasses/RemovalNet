@@ -6,7 +6,7 @@ __copyright__ = 'Copyright © 2022/09/23, homeway'
 
 
 """
-This script is used to evaluate benchmark of DeepJudge
+This script is used to evaluate benchmark of Modeldiff
 """
 
 
@@ -14,11 +14,11 @@ import os, argparse, logging
 import os.path as osp
 import torch
 import numpy as np
-from exp import vis
 from utils import helper
-from defense.DeepJudge import DeepJudge
+from defense.ModelDiff.modeldiff import ModelDiff
 from benchmark import ImageBenchmark
 from dataset import loader as dloader
+from . import vis
 
 
 def get_args():
@@ -49,10 +49,10 @@ def get_args():
     args.namespace = helper.curr_time
     args.out_root = osp.join(args.ROOT, "output")
     args.logs_root = osp.join(args.ROOT, "logs")
-    args.deepjudge_root = osp.join(args.out_root, "DeepJudge", "exp")
+    args.modeldiff_root = osp.join(args.out_root, "ModelDiff", "exp")
     args.archs = {
-        "CIFAR10": ["mobilenet_v2"],
-        "ImageNet": ["resnet50"],
+        "CIFAR10": ["vgg16_bn"],
+        "ImageNet": ["resnet50", "mobilenet_v2"],
     }
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
     helper.set_default_seed(seed=args.seed)
@@ -62,13 +62,25 @@ def get_args():
     return args
 
 
+def rename_metric(key):
+    if key == "2":
+        key = "L2"
+    elif key == "1":
+        key = "L1"
+    elif key == "inf":
+        key = "Linf"
+    return key
+
+
 def exp11_eval(args):
-    methods = ["distill", "quantize", "finetune", "prune", "distill", "steal"]
-    out_root = osp.join(args.out_root, "DeepJudge")
+    methods = ["quantize", "finetune", "prune", "distill", "steal", "negative"]
+    out_root = osp.join(args.out_root, "ModelDiff")
+
+    batch_size = 128 if args.dataset == "ImageNet" else 256
     for arch in args.archs[args.dataset]:
         result = {}
         tag = f"{args.dataset}_{arch}"
-        path = osp.join(args.deepjudge_root, f"exp11_{tag}.pt")
+        path = osp.join(args.modeldiff_root, f"exp11_{tag}.pt")
         if not osp.exists(path):
             cfg = dloader.load_cfg(dataset_id=args.dataset, arch_id=arch)
             bench = ImageBenchmark(
@@ -78,73 +90,35 @@ def exp11_eval(args):
                 models_dir=args.models_dir)
             models = bench.list_models(cfg=cfg, methods=methods)
             model1, test_loader, fingerprint = None, None, None
+
             for idx, model in enumerate(models):
-                print(f"-> idx:{idx} runing for model:{model} seed:{model.seed}")
+                print(f"-> run:{str(model)} seed:{model.seed}")
+                device = torch.device("cpu") if "quantize" in str(model) else args.device
                 if idx == 0:
-                    model1 = model.torch_model(seed=1000)
-                    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test")
+                    model1 = model.torch_model(seed=args.seed)
+                    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=batch_size)
                     continue
 
                 key = f"{model1.task}_{str(model)}"
                 if key not in result.keys():
                     result[key] = {
-                        "ROB": [],
-                        "JSD": [],
-                        "LOD": [],
-                        "LAD": [],
-                        "NOD": [],
-                        "NAD": [],
-                        "MR": []
+                        "ddv": [],
+                        "ddm": [],
+                        "mr": []
                     }
-                device = torch.device("cpu") if "quantize" in str(model) else args.device
                 model2 = model.torch_model(seed=model.seed)
-                deepjudge = DeepJudge(model1, model2, test_loader=test_loader,
-                                      device=device, seed=args.seed, out_root=out_root,
-                                      batch_size=args.batch_size,
-                                      layer_index=3, seed_method=args.seed_method)
-                if fingerprint is None:
-                    fingerprint = deepjudge.extract()
-                deepjudge.model2 = model2
-                dist = deepjudge.verify(fingerprint)
+                modeldiff = ModelDiff(model1, model2, test_loader=test_loader, device=device, out_root=out_root, seed=model.seed)
+                dist = modeldiff.verify(modeldiff.extract())
                 for metric in dist.keys():
-                    result[key][metric].append(dist[metric])
-            print()
+                    result[key][rename_metric(metric)].append(dist[metric])
+                print()
             torch.save(result, path)
-        result = torch.load(path)
+        result = torch.load(path, map_location="cpu")
         yield tag, result
 
 
-def plot_boxplot(result, tag, fpath):
-    xticklabels = []
-    data = {}
-    metrics = ["LAD", "LOD"]
-    metrics_str = ""
-    for metric in metrics:
-        metrics_str += f"_{metric}"
-    metrics_str = metrics_str[1:]
-
-    print()
-    for label, item in result.items():
-        xticklabels.append(label.split("-")[-2])
-        print(f"-> {label}")
-        for metric in item.keys():
-            min_v = round(min(item[metric]), 4)
-            max_v = round(max(item[metric]), 4)
-            med_v = round(((max_v + min_v) / 2), 4)
-            mean_v = round(np.mean(item[metric]), 4)
-            std_v = round(np.std(item[metric]), 4)
-            print(f"-> metric: {metric} med:{med_v}±{max_v-med_v} mean:{mean_v} std:{std_v}")
-            if metric not in metrics:
-                continue
-            if metric not in data.keys():
-                data[metric] = []
-            data[metric].append(item[metric])
-        print()
-    vis.plot_boxplot(data, xticklabels=xticklabels, fpath=fpath+f"_m{metrics_str}.pdf")
-
-
 def exp11_eval_removalnet(args):
-    out_root = osp.join(args.out_root, "DeepJudge")
+    out_root = osp.join(args.out_root, "ModelDiff")
     cfg = dloader.load_cfg(dataset_id=args.dataset, arch_id=args.archs[args.dataset][0])
     benchmk = ImageBenchmark(
         archs=args.archs[args.dataset][0],
@@ -154,29 +128,50 @@ def exp11_eval_removalnet(args):
     model1 = benchmk.load_wrapper(args.model1, seed=1000).load_torch_model()
     model2 = benchmk.load_wrapper(args.model2, seed=args.seed).load_torch_model()
     test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=128)
-    deepjudge = DeepJudge(model1, model2, test_loader=test_loader,
-                                      device=args.device, seed=args.seed, out_root=out_root,
-                                      batch_size=args.batch_size,
-                                      layer_index=5, seed_method=args.seed_method)
-    fingerprint = deepjudge.extract()
-    item = deepjudge.verify(fingerprint)
+    modeldiff = ModelDiff(model1, model2, test_loader=test_loader, device=args.device, out_root=out_root, seed=args.seed)
+    item = modeldiff.verify(modeldiff.extract())
 
     print(item)
     for metric in item.keys():
-        min_v = np.min(item[metric])
-        max_v = np.max(item[metric])
-        med_v = (max_v + min_v) / 2
-        mean_v = np.mean(item[metric])
-        std_v = np.std(item[metric])
+        min_v = round(min(item[metric]), 2)
+        max_v = round(max(item[metric]), 2)
+        med_v = round(((max_v + min_v) / 2), 2)
+        mean_v = round(np.mean(item[metric]), 2)
+        std_v = round(np.std(item[metric]), 2)
         print(f"-> Removal metric: {metric} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
+
+
+def plot_boxplot(result, tag, fpath=None):
+    xticklabels = []
+    data = {}
+    metrics = ["mr", "ddv", "ddm"]
+    for label, item in result.items():
+        model = label.split("-")[-2]
+        xticklabels.append(model)
+        for metric in item.keys():
+            min_v = round(min(item[metric]), 2)
+            max_v = round(max(item[metric]), 2)
+            med_v = round(((max_v + min_v) / 2), 2)
+            mean_v = round(np.mean(item[metric]), 2)
+            std_v = round(np.std(item[metric]), 2)
+            print(f"-> model:{model} metric: {rename_metric(metric)} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
+            if metric not in metrics:
+                continue
+            if metric not in data.keys():
+                data[metric] = []
+            data[metric].append(item[metric])
+    if fpath is not None:
+        vis.plot_boxplot(data, xticklabels=xticklabels, fpath=fpath)
+
 
 def main():
     args = get_args()
     print(f"-> Running with config:{args}")
     for tag, result in exp11_eval(args):
-        fpath = osp.join(args.deepjudge_root, f"exp11_{tag}_boxplot")
+        fpath = osp.join(args.modeldiff_root, f"exp11_{tag}_boxplot.pdf")
         plot_boxplot(result, tag, fpath)
-    exp11_eval_removalnet(args)
+    #print(f"-> Running for removalnet")
+    #exp11_eval_removalnet(args)
 
 
 if __name__ == "__main__":

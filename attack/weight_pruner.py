@@ -15,9 +15,10 @@ class WeightPruner(Finetuner):
         teacher,
         train_loader,
         test_loader,
+        init_models=True
     ):
         super(WeightPruner, self).__init__(
-            args, model, teacher, train_loader, test_loader
+            args, model, teacher, train_loader, test_loader, init_models=init_models
         )
         assert (
             self.args.weight_ratio >= 0 
