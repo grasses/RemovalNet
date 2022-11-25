@@ -42,7 +42,7 @@ class WhiteboxSeeding(BaseSeeding):
             a dictionary of generated test cases {(layer_index, neuron_index): [test cases...]}
         """
         self.logger.info(f"-> generate whitebox test samples... layer_index:{layer_index}")
-        data = self.load_test_samples(tag="whitebox")
+        data = self.load_test_samples(tag=f"whitebox-L{layer_index}")
         if data is not None:
             return data["test_x"]
 

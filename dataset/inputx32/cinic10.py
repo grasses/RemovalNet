@@ -64,7 +64,7 @@ class CINIC10(torchvision.datasets.vision.VisionDataset):
         preload: bool = False
     ) -> None:
         super().__init__(root, transform=transform, target_transform=target_transform)
-        assert split in PARTS,f"{split} not in {PARTS}"
+        assert split in PARTS, f"{split} not in {PARTS}"
         self.partition = split
         self.root = root
         self.num_classes = 10
@@ -73,7 +73,7 @@ class CINIC10(torchvision.datasets.vision.VisionDataset):
 
         #if not self._check_integrity():
         #    raise RuntimeError("Dataset not found or corrupted. You can use download=True to download it")
-        self.data = ImageFolder(os.path.join(self.root, partition))
+        self.data = ImageFolder(os.path.join(self.root, split))
 
 
 

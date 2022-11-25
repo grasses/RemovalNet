@@ -29,6 +29,7 @@ class BaseSeeding:
         if osp.exists(fpath):
             self.logger.info(f"-> load test samples from: {fpath}")
             return torch.load(fpath, map_location="cpu")
+        print("-> [DeepJudge] file not found!", fpath)
         return None
 
     def save_test_samples(self, seed_x, seed_y, test_x, test_y, tag=""):
