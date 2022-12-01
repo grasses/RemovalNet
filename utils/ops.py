@@ -12,7 +12,7 @@ import torch
 import random
 
 
-def set_default_seed(seed=999):
+def set_default_seed(seed=100):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -20,6 +20,7 @@ def set_default_seed(seed=999):
     torch.cuda.manual_seed_all(seed)  # multi-GPU
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    print(f"-> set seed:{seed}")
 
 
 def normalize(v):

@@ -20,7 +20,7 @@ class Adv(Attack):
 
     def IPGuard(self, images, labels, k, targeted, steps=1000, lr=1e-2):
         assert targeted in ["L", "R"]
-        batch_x = images.clone().detach().to(self.device)
+        batch_x = images.clone().detach()
 
         # We find k should be very small, e.g., k=0.01, since logit is always small than 10
         k = Variable(torch.Tensor([k]), requires_grad=True)[0].detach()
@@ -32,7 +32,7 @@ class Adv(Attack):
         ReLU = torch.nn.ReLU()
 
         for idx in phar:
-            x = batch_x[[idx]].clone()
+            x = batch_x[[idx]].clone().to(self.device)
             z = self.model(x)
             i = z.argmax(dim=1)[0]
             if targeted == "L":       # least-like
@@ -64,7 +64,7 @@ class Adv(Attack):
                 optimizer.step()
                 phar.set_description(
                     f"-> [IPGuard] idx{idx}-step{step} i:{int(i)} j:{int(j)} t:{int(t)} "
-                    f"z_i:{round(float(self.model(x)[0][i]), 6)} z_j:{round(float(self.model(x)[0][j]), 6)} loss:{loss.data}")
+                    f"z_i:{round(float(self.model(x)[0][i]), 4)} z_j:{round(float(self.model(x)[0][j]), 4)} loss:{round(float(loss.data), 4)}")
 
                 # ReLU(z_i - z_j + k) ≈ 0
                 if loss <= 1e-4:

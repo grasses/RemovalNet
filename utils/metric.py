@@ -37,11 +37,22 @@ def topk_test(model, test_loader, device, epoch=0, debug=False):
             loss = F.cross_entropy(logits, y)
             test_loss += loss.item()
             pred = logits.argmax(dim=1)
-            correct["top1"] += torch.eq(y.view_as(pred), pred).sum().item()
-            _, tk = torch.topk(logits, k=3, dim=1)
-            correct["top3"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
-            _, tk = torch.topk(logits, k=5, dim=1)
-            correct["top5"] += torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
+
+            top1 = torch.eq(y.view_as(pred), pred).sum().item()
+            correct["top1"] += top1
+
+            top3 = top1
+            if logits.shape[1] >= 3:
+                _, tk = torch.topk(logits, k=3, dim=1)
+                top3 = torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
+            correct["top3"] += top3
+
+            top5 = top1
+            if logits.shape[1] >= 5:
+                _, tk = torch.topk(logits, k=5, dim=1)
+                top5 = torch.eq(y[:, None, ...], tk).any(dim=1).sum().item()
+            correct["top5"] += top5
+
             size += len(x)
     test_loss /= (1.0 * size)
     topk_acc["top1"] = round(100.0 * correct["top1"] / size, 5)

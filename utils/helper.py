@@ -10,13 +10,12 @@ import os
 import sys
 import time
 import os.path as osp
-import random
 import argparse
 import torch
-import numpy as np
 import functools
 import datetime
 import pytz
+from utils.ops import set_default_seed
 curr_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
 ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 global step
@@ -37,17 +36,6 @@ def lazy_property(func):
             setattr(self, attribute, func(self))
         return getattr(self, attribute)
     return wrapper
-
-
-def set_default_seed(seed=1024):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # multi-GPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
 
 def progress_bar(current, total, msg=None):
     global last_time, begin_time

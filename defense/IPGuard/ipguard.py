@@ -134,7 +134,7 @@ def main():
     if "quantize" in model1.task or "quantize" in model2.task:
         args.device = torch.device("cpu")
 
-    test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id, split="test", shuffle=True)
+    test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id, split="test", batch_size=args.test_size, shuffle=True)
     ipguard = IPGuard(model1=model1, model2=model2, test_loader=test_loader, device=args.device, out_root=args.fingerprint_root, targeted=args.targeted, k=args.k, seed=args.seed)
     dist = ipguard.compare()
     print(f"-> IPGuard dist: {dist}")

@@ -178,7 +178,6 @@ class Finetuner(object):
 
         out = model(batch)
         _, pred = out.max(dim=1)
-
         top1 = float(pred.eq(label).sum().item()) / label.shape[0] * 100.
 
         loss = 0.
@@ -241,9 +240,10 @@ class Finetuner(object):
                 top1 += int(pred.eq(label).sum().item())
         return float(top1)/total*100, total_kd/(i+1), total_soft/(i+1), total_hard/(i+1)
         
-    def test(self, model, teacher, test_loader, teststep=500, loss=True):
+    def test(self, model, teacher, test_loader, teststep=500, loss=True, train=True):
         reg_layers = self.reg_layers
         args = self.args
+        split = "Train" if train else "Test"
 
         with torch.no_grad():
             model.eval()
@@ -288,7 +288,7 @@ class Finetuner(object):
                         total_l2sp_reg += unweighted.item()
                     except:
                         pass
-                phar.set_description(f"-> Eval Test [{step}/{teststep}] Acc@1:{round(float(top1)/total*100, 3)}%")
+                phar.set_description(f"-> Eval {split} [{step}/{teststep}] Acc@1:{round(float(top1)/total*100, 3)}%")
                 phar.update(1)
                 if step > teststep:
                     break
@@ -298,7 +298,6 @@ class Finetuner(object):
     def get_fine_tuning_parameters(self):
         model = self.model
         parameters = []
-
         ft_begin_module = self.args.ft_begin_module
         ft_ratio = self.args.ft_ratio if 'ft_ratio' in self.args else None
 
@@ -465,7 +464,7 @@ class Finetuner(object):
                 )
                 progress.display(i)
 
-            if self.debug and ((i % args.test_interval == 0 and i > 0) or (i == iterations-1) or (i in warmup_iter)):
+            if (i % args.test_interval == 0 and i > 0) or (i == iterations-1) or (i in warmup_iter):
                 if self.args.steal:
                     test_top1, test_ce_loss, test_feat_loss, test_weight_loss = self.steal_test(
                         # model, teacher, test_loader, teststep=500, loss=True
@@ -476,10 +475,10 @@ class Finetuner(object):
                     test_feat_layer_loss, train_feat_layer_loss = 0, 0
                 else:
                     test_top1, test_ce_loss, test_feat_loss, test_weight_loss, test_feat_layer_loss = self.test(
-                        model, teacher, train_loader, teststep=500, loss=True
+                        model, teacher, train_loader, teststep=500, loss=True, train=False
                     )
                     train_top1, train_ce_loss, train_feat_loss, train_weight_loss, train_feat_layer_loss = self.test(
-                        model, teacher, test_loader, teststep=500, loss=True
+                        model, teacher, test_loader, teststep=500, loss=True, train=True
                     )
                 
                 print(

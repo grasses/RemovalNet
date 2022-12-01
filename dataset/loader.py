@@ -13,26 +13,26 @@ import torch
 import torchvision
 import logging
 from torchvision import transforms
+from utils import ops
 from . import inputx32, inputx64, inputx224
 from dataset.inputx32 import CIFAR10, CINIC10
 from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data, CUB200Data, ImageNet
-#from dataset.audio import SpeechCommands
+from dataset.inputx224.celeba import CelebA
+
 DATA_ROOT = osp.join(osp.abspath(osp.dirname(__file__)), "data")
 logger = logging.getLogger('DataLoader')
 
 task_list = {
     "CV32": ["CIFAR10", "CIFAR100", "CINIC10"],
-    "CV224": ["SDog120", "Flower102", "ImageNet"],
+    "CV224": ["CelebA", "ImageNet"],
     "AUDIO": ["SpeechCommands"],
 }
+for i in range(40):
+    task_list["CV224"].append(f"CelebA+{i}")
 
 
 def load_cfg(dataset_id, arch_id=None):
-    cfg = eval(f"inputx{get_size(dataset_id)}.cfg()")
-    if "resnet" in arch_id:
-        cfg.lr /= 5.0
-    if 'alexnet' in arch_id:
-        cfg.lr /= 4.0
+    cfg = eval(f"inputx{get_size(dataset_id)}.cfg(dataset_id=dataset_id)")
     return cfg
 
 
@@ -40,16 +40,11 @@ def get_num_classess(dataset_id):
     NUM_CLASSES = {
         "CIFAR10": 10,
         "CINIC10": 10,
-        "CIFAR100": 100,
-        "GSTB": 200,
-        "MIT67": 67,
-        "SDog120": 120,
-        "Flower102": 102,
-        "CUB200Data": 200,
+        "CelebA": 2,
         "ImageNet": 1000,
-        "Caltech257Data": 256,
-        "Stanford40Data": 40,
     }
+    for i in range(40):
+        NUM_CLASSES[f"CelebA+{i}"] = 2
     return NUM_CLASSES[dataset_id]
 
 
@@ -57,25 +52,22 @@ def get_size(dataset_id):
     INPUT_SIZE = {
         "CIFAR10": 32,
         "CINIC10": 32,
-        "CIFAR100": 32,
-        "GSTB": 64,
-        "MIT67": 224,
-        "SDog120": 224,
+        "CelebA": 224,
         "Flower102": 224,
-        "CUB200Data": 224,
         "ImageNet": 224,
-        "Caltech257Data": 224,
-        "Stanford40Data": 224,
     }
+    for i in range(40):
+        INPUT_SIZE[f"CelebA+{i}"] = 224
     return INPUT_SIZE[dataset_id]
 
 
-def unnormalize(tensor, mean, std):
-    tmp_tensor = tensor.clone()
-    for t, m, s in zip(tmp_tensor, mean, std):
-        (t.mul_(s).add_(m)).mul_(255.0)
-    return tmp_tensor.double()
-
+def unnormalize(tensor, mean, std, clamp=False):
+    tmp = tensor.clone()
+    for t, m, s in zip(tmp, mean, std):
+        (t.mul_(s).add_(m))
+    if clamp:
+        tmp = torch.clamp(tmp, min=0.0, max=1.0)
+    return tmp.double()
 
 
 def get_bounds(mean, std):
@@ -90,7 +82,7 @@ def get_bounds(mean, std):
     return bounds
 
 
-def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shots=-1):
+def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True):
     """
     Get dataloader.
     :param dataset_id:
@@ -100,11 +92,16 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
     :param shot:
     :return:
     """
+    shots = -1
+    if "CelebA" in dataset_id:
+        dataset_id, shots = dataset_id.split("+")
+
     datapath = os.path.join(DATA_ROOT, dataset_id)
     assert os.path.exists(datapath)
 
     cfg = load_cfg(dataset_id=dataset_id, arch_id="")
     normalize = torchvision.transforms.Normalize(mean=cfg.mean, std=cfg.std)
+    ops.set_default_seed(cfg.seed)
 
     if split == 'train':
         dataset = eval(dataset_id)(
@@ -115,7 +112,7 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
                 transforms.ToTensor(),
                 normalize,
             ]),
-            shots=shots, seed=cfg.seed, preload=False
+            shots=int(shots), seed=cfg.seed, preload=False
         )
     elif split == 'test' or split == 'val':
         dataset = eval(dataset_id)(
@@ -125,7 +122,7 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, shot
                 transforms.ToTensor(),
                 normalize,
             ]),
-            shots=shots, seed=cfg.seed, preload=False
+            shots=int(shots), seed=cfg.seed, preload=False
         )
     else:
         raise NotImplementedError()

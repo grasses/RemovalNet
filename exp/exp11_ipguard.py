@@ -6,16 +6,16 @@ __copyright__ = 'Copyright © 2022/09/23, homeway'
 
 
 """
-This script is used to evaluate benchmark of Modeldiff
+This script is used to evaluate benchmark of IPGuard
 """
 
 
-import os, argparse, logging
+import os, argparse
 import os.path as osp
 import torch
 import numpy as np
 from utils import helper
-from defense.ModelDiff.modeldiff import ModelDiff
+from defense.IPGuard.ipguard import IPGuard
 from benchmark import ImageBenchmark
 from dataset import loader as dloader
 from . import vis
@@ -27,13 +27,13 @@ def get_args():
                         help="Path to the dir of datasets.")
     parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(helper.ROOT, "model/ckpt"),
                         help="Path to the dir of benchmark models.")
-    parser.add_argument("-model1", action="store", dest="model1", default="train(resnet50,CIFAR10)-", required=False,
-                        help="model 1.")
-    parser.add_argument("-model2", action="store", dest="model2", default="pretrain(resnet50,CIFAR10)-prune(0.5)-",
-                        required=False, help="model 2.")
+    parser.add_argument("-model1", action="store", dest="model1", default="train(resnet50,CIFAR10)-", required=False, help="model 1.")
+    parser.add_argument("-model2", action="store", dest="model2", default="pretrain(resnet50,CIFAR10)-prune(0.5)-", required=False, help="model 2.")
+    parser.add_argument("-k", action="store", default=0.01, type=float, help="k of IPGuard")
+    parser.add_argument("-targeted", action="store", default="L", type=str, help="L:lest-likely R:random", choices=["L", "R"])
+    parser.add_argument("-dataset", required=True, type=str, default="CIFAR10", help="Dataset for testing")
     parser.add_argument("-tag", required=False, type=str, help="tag of script.")
-    parser.add_argument("-test_size", required=False, type=int, default=500, help="tag of script.")
-    parser.add_argument("-dataset", required=False, type=str, default="CIFAR10", help="model archtecture")
+    parser.add_argument("-test_size", required=False, type=int, default=1000, help="tag of script.")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
@@ -41,7 +41,7 @@ def get_args():
     args.namespace = helper.curr_time
     args.out_root = osp.join(args.ROOT, "output")
     args.logs_root = osp.join(args.ROOT, "logs")
-    args.proj_root = osp.join(args.out_root, "ModelDiff")
+    args.proj_root = osp.join(args.out_root, "IPGuard")
     args.archs = {
         "CIFAR10": ["resnet50"],
         "ImageNet": ["resnet50"],
@@ -50,27 +50,14 @@ def get_args():
         args.archs[f"CelebA+{attr_idx}"] = ["resnet50"]
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
     helper.set_default_seed(seed=args.seed)
-    for path in [args.datasets_dir, args.models_dir, args.out_root, args.logs_root]:
+    for path in [args.datasets_dir, args.models_dir, args.out_root, args.logs_root, args.proj_root]:
         if not osp.exists(path):
             os.makedirs(path)
     return args
 
 
-def rename_metric(key):
-    if key == "2":
-        key = "L2"
-    elif key == "1":
-        key = "L1"
-    elif key == "inf":
-        key = "Linf"
-    return key
-
-
 def exp11_eval(args):
-    methods = ["quantize", "finetune", "prune", "distill", "steal", "negative"]
-    out_root = osp.join(args.out_root, "ModelDiff")
-
-    batch_size = 128 if args.dataset == "ImageNet" else 256
+    methods = ["quantize", "negative", "finetune", "prune", "distill", "steal"]
     for arch in args.archs[args.dataset]:
         result = {}
         tag = f"{args.dataset}_{arch}"
@@ -84,61 +71,55 @@ def exp11_eval(args):
                 models_dir=args.models_dir)
             models = bench.list_models(cfg=cfg, methods=methods)
             model1, test_loader, fingerprint = None, None, None
-
             for idx, model in enumerate(models):
-                print(f"-> run:{str(model)} seed:{model.seed}")
                 device = torch.device("cpu") if "quantize" in str(model) else args.device
+                print(f"-> idx:{idx} runing for model:{model} seed:{model.seed}")
                 if idx == 0:
-                    model1 = model.torch_model(seed=args.seed)
-                    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=batch_size)
+                    model1 = model.torch_model(seed=1000)
+                    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=args.test_size)
                     continue
 
                 key = f"{model1.task}_{str(model)}"
                 if key not in result.keys():
-                    result[key] = {
-                        "ddv": [],
-                        "ddm": [],
-                        "mr": []
-                    }
+                    result[key] = {"MR": []}
                 model2 = model.torch_model(seed=model.seed)
-                modeldiff = ModelDiff(model1, model2, test_loader=test_loader, device=device, out_root=out_root, seed=model.seed)
-                dist = modeldiff.verify(modeldiff.extract())
+                ipguard = IPGuard(model1, model2, test_loader=test_loader, device=device, out_root=args.proj_root,
+                                  k=args.k, targeted=args.targeted, test_size=args.test_size, seed=args.seed)
+                fingerprint = ipguard.extract()
+                dist = ipguard.verify(fingerprint)
                 for metric in dist.keys():
-                    result[key][rename_metric(metric)].append(dist[metric])
-                print()
+                    result[key][metric].append(dist[metric])
+                print(f"-> key:{key} dist:{dist}\n")
+            print()
             torch.save(result, path)
         result = torch.load(path, map_location="cpu")
         yield tag, result
 
 
 def exp11_eval_removalnet(args):
-    out_root = osp.join(args.out_root, "ModelDiff")
-    cfg = dloader.load_cfg(dataset_id=args.dataset, arch_id=args.archs[args.dataset][0])
-    benchmk = ImageBenchmark(
-        archs=args.archs[args.dataset][0],
-        datasets=[args.dataset],
-        datasets_dir=args.datasets_dir,
-        models_dir=args.models_dir)
+    benchmk = ImageBenchmark(archs=args.archs[args.dataset][0], datasets=[args.dataset],
+        datasets_dir=args.datasets_dir, models_dir=args.models_dir)
     model1 = benchmk.load_wrapper(args.model1, seed=1000).load_torch_model()
     model2 = benchmk.load_wrapper(args.model2, seed=args.seed).load_torch_model()
-    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=128)
-    modeldiff = ModelDiff(model1, model2, test_loader=test_loader, device=args.device, out_root=out_root, seed=args.seed)
-    item = modeldiff.verify(modeldiff.extract())
-
-    print(item)
+    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=args.test_size)
+    ipguard = IPGuard(model1, model2, test_loader=test_loader, device=args.device, out_root=args.proj_root,
+                      k=args.k, targeted=args.targeted, test_size=args.test_size, seed=args.seed)
+    fingerprint = ipguard.extract()
+    item = ipguard.verify(fingerprint)
     for metric in item.keys():
         min_v = np.min(item[metric])
         max_v = np.max(item[metric])
         med_v = (max_v + min_v) / 2
         mean_v = np.mean(item[metric])
         std_v = np.std(item[metric])
-        print(f"-> Removal metric: {metric} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
+        if metric in ["MR"]:
+            print(f"-> Removal metric: {metric} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
 
 
 def plot_boxplot(result, tag, fpath=None):
     xticklabels = []
     data = {}
-    metrics = ["mr", "ddv", "ddm"]
+    metrics = ["MR"]
     for label, item in result.items():
         model = label.split("-")[-2]
         xticklabels.append(model)
@@ -148,9 +129,7 @@ def plot_boxplot(result, tag, fpath=None):
             med_v = round(((max_v + min_v) / 2), 2)
             mean_v = round(np.mean(item[metric]), 2)
             std_v = round(np.std(item[metric]), 2)
-
-            if metric == "ddv":
-                print(f"-> model:{model} metric: {rename_metric(metric)} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
+            print(f"-> model:{model} metric: {metric} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
             if metric not in metrics:
                 continue
             if metric not in data.keys():

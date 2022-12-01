@@ -49,11 +49,14 @@ def get_args():
     args.namespace = helper.curr_time
     args.out_root = osp.join(args.ROOT, "output")
     args.logs_root = osp.join(args.ROOT, "logs")
-    args.deepjudge_root = osp.join(args.out_root, "DeepJudge", "exp")
+    args.proj_root = osp.join(args.out_root, "DeepJudge")
     args.archs = {
-        "CIFAR10": ["mobilenet_v2"],
+        "CIFAR10": ["resnet50"],
         "ImageNet": ["resnet50"],
     }
+    for attr_idx in range(40):
+        args.archs[f"CelebA+{attr_idx}"] = ["vgg19_bn"]
+
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
     helper.set_default_seed(seed=args.seed)
     for path in [args.datasets_dir, args.models_dir, args.out_root, args.logs_root]:
@@ -63,12 +66,12 @@ def get_args():
 
 
 def exp11_eval(args):
-    methods = ["distill", "quantize", "finetune", "prune", "distill", "steal"]
+    methods = ["distill", "quantize", "finetune", "prune", "negative", "steal"]
     out_root = osp.join(args.out_root, "DeepJudge")
     for arch in args.archs[args.dataset]:
         result = {}
         tag = f"{args.dataset}_{arch}"
-        path = osp.join(args.deepjudge_root, f"exp11_{tag}.pt")
+        path = osp.join(args.proj_root, f"exp/exp11_{tag}.pt")
         if not osp.exists(path):
             cfg = dloader.load_cfg(dataset_id=args.dataset, arch_id=arch)
             bench = ImageBenchmark(
@@ -108,6 +111,7 @@ def exp11_eval(args):
                 dist = deepjudge.verify(fingerprint)
                 for metric in dist.keys():
                     result[key][metric].append(dist[metric])
+
             print()
             torch.save(result, path)
         result = torch.load(path)
@@ -157,7 +161,7 @@ def exp11_eval_removalnet(args):
     deepjudge = DeepJudge(model1, model2, test_loader=test_loader,
                                       device=args.device, seed=args.seed, out_root=out_root,
                                       batch_size=args.batch_size,
-                                      layer_index=5, seed_method=args.seed_method)
+                                      layer_index=3, seed_method=args.seed_method)
     fingerprint = deepjudge.extract()
     item = deepjudge.verify(fingerprint)
 
@@ -170,11 +174,12 @@ def exp11_eval_removalnet(args):
         std_v = np.std(item[metric])
         print(f"-> Removal metric: {metric} med:{med_v}±{max_v - med_v} mean:{mean_v} std:{std_v}")
 
+
 def main():
     args = get_args()
     print(f"-> Running with config:{args}")
     for tag, result in exp11_eval(args):
-        fpath = osp.join(args.deepjudge_root, f"exp11_{tag}_boxplot")
+        fpath = osp.join(args.proj_root, f"exp/exp11_{tag}_boxplot")
         plot_boxplot(result, tag, fpath)
     exp11_eval_removalnet(args)
 

@@ -10,9 +10,12 @@ import torch
 import numpy as np
 import os.path as osp
 from sklearn.manifold import TSNE
+import matplotlib
 import matplotlib.pyplot as plt
 from utils import helper
 from torchcam.methods import LayerCAM
+from torchcam.utils import overlay_mask
+from torchvision.transforms.functional import normalize, resize, to_pil_image
 sys_args = helper.get_args()
 
 
@@ -44,6 +47,25 @@ def pixel_plot(data, ax, fontsize=18, hide_labels=False):
     return pc
 
 
+def plot_accuracy_dist_curve(data, metrics, path, fontsize=30):
+    plt.figure(figsize=(16, 16), dpi=100)
+    plt.cla()
+    plt.grid()
+
+    for metric in metrics:
+        print("-> metric", metric)
+        point = data[metric]
+        plt.plot(point[:, 0], point[:, 1], linewidth=5, linestyle='-', markersize=15, marker=matplotlib.markers.CARETDOWNBASE)
+    plt.legend(labels=list(metrics), loc='best', fontsize=fontsize)
+    plt.xlim((0.4, 0.95))
+    plt.xticks(fontsize=fontsize)
+    plt.yticks(fontsize=fontsize)
+    plt.xlabel("Accuracy(%)", fontsize=fontsize)
+    plt.ylabel("Dist", fontsize=fontsize)
+    plt.savefig(path)
+    print(f"-> saving fig: {path}")
+
+
 def view_learning_state(data, file_path, fontsize=30):
     for key in data["keys"]:
         plt.figure(figsize=(16, 12), dpi=100)
@@ -64,43 +86,71 @@ def view_learning_state(data, file_path, fontsize=30):
         print(f"-> saving fig: {fpath}")
 
 
-def view_layer_activation(model_0, model_t, x, y, target_layer, fig_path, size=8, fontsize=30, device=torch.device("cuda:1")):
-    x = x.clone()
-    model_0 = model_0.to(device)
+def view_layer_activation(model_T, model_t, x, y, ori_x, target_layer, fig_path, size=8, fontsize=30, device=torch.device("cuda:0")):
+    x, y = x.to(device), y.to(device)
+    class_idx = y.tolist()
+    model_0 = model_T.to(device)
     model_t = model_t.to(device)
 
-    class_idx = y.tolist()
+    # extract LayerCAM for model_T
     CAM0 = LayerCAM(model_0, target_layer)
     cams = CAM0(class_idx=class_idx, scores=model_0(x))
     fused_cam0 = CAM0.fuse_cams(cams).detach().cpu()
     CAM0.remove_hooks()
-
+    # extract LayerCAM for model_t
     CAM1 = LayerCAM(model_t, target_layer)
     cams = CAM1(class_idx=class_idx, scores=model_t(x))
     fused_camt = CAM1.fuse_cams(cams).detach().cpu()
     CAM1.remove_hooks()
 
-    fig = plt.figure(constrained_layout=True, figsize=(12, 2 + size * 4), dpi=160)
-    subfigs = fig.subfigures(1, 2, wspace=0.07, hspace=0.07)
-    axsLeft = subfigs[0].subplots(size, 1, sharey=True)
+    fig = plt.figure(figsize=(16, size * 4), dpi=200)
+    img_idx = 0
+    for idx in range(size):
+        # original image
+        img_idx += 1
+        fig.add_subplot(size, 3, img_idx)
+        pil_image = to_pil_image(ori_x[idx])
+        plt.imshow(pil_image)
+
+        # overlay of target model output
+        img_idx += 1
+        fig.add_subplot(size, 3, img_idx)
+        pil_map_T = to_pil_image(fused_cam0[idx].squeeze(0), mode='F')
+        pil_overlay_T = overlay_mask(pil_image, pil_map_T, alpha=0.5)
+        plt.imshow(pil_overlay_T)
+
+        # overlay of surrogate model output
+        img_idx += 1
+        fig.add_subplot(size, 3, img_idx)
+        pil_map_t = to_pil_image(fused_camt[idx].squeeze(0), mode='F')
+        pil_overlay_t = overlay_mask(pil_image, pil_map_t, alpha=0.5)
+        plt.imshow(pil_overlay_t)
+    pth = f"{fig_path}_OverLay.pdf"
+    plt.savefig(pth)
+    print(f"-> Saving OverLay:{pth}")
+
+    fig = plt.figure(constrained_layout=True, figsize=(10, 5 + size * 4.5), dpi=200)
+    # Left collum
+    subfigs = fig.subfigures(1, 2, wspace=0.1, hspace=0.1)
+    axsLeft = subfigs[0].subplots(size, 1)
     subfigs[0].set_facecolor('#ffffff')
     for nn, ax in enumerate(axsLeft):
         fmap = fused_cam0[nn].squeeze(0).numpy()
         pc = pixel_plot(fmap, ax, hide_labels=True)
-    subfigs[0].suptitle(f'model_0 {target_layer}', fontsize=fontsize-5)
-    subfigs[0].colorbar(pc, shrink=0.6, ax=axsLeft, location='bottom')
-
-    axsRight = subfigs[1].subplots(size, 1, sharex=True)
+    subfigs[0].suptitle(f'Model_T {target_layer}', fontsize=fontsize-2)
+    subfigs[0].colorbar(pc, shrink=0.8, ax=axsLeft, location='bottom')
+    # Right collum
+    axsRight = subfigs[1].subplots(size, 1)
+    subfigs[1].set_facecolor('#ffffff')
     for nn, ax in enumerate(axsRight):
         fmap = fused_camt[nn].squeeze(0).numpy()
         pc = pixel_plot(fmap, ax, hide_labels=True)
-    subfigs[1].set_facecolor('#ffffff')
-    subfigs[1].colorbar(pc, shrink=0.6, ax=axsRight, location='bottom')
-    subfigs[1].suptitle(f'model_t {target_layer}', fontsize=fontsize-5)
+    subfigs[1].suptitle(f'Model_S {target_layer}', fontsize=fontsize-2)
+    subfigs[1].colorbar(pc, shrink=0.8, ax=axsRight, location='bottom')
     fig.suptitle(f'LayerCAM of {target_layer}', fontsize=fontsize)
-    fig_path = fig_path + f".pdf"
-    print(f"-> save LayerCam:{fig_path}")
-    plt.savefig(fig_path)
+    pth = f"{fig_path}_ActativeLay.pdf"
+    plt.savefig(pth)
+    print(f"-> Saving ActativeLay:{pth}")
 
 
 def view_decision_boundary(model1, model2, test_loader, fig_path, step, device=sys_args.device):

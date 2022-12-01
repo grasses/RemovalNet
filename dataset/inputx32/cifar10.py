@@ -59,7 +59,6 @@ class CIFAR10(VisionDataset):
         seed: int = 0,
         preload: bool = False
     ) -> None:
-
         super().__init__(root, transform=transform, target_transform=target_transform)
         self.split = split
         if download:

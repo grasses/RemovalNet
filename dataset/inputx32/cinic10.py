@@ -7,8 +7,8 @@ import os
 from typing import Optional,Callable,Tuple,Any
 import shutil
 import subprocess as sp
-
 PARTS={"train","valid","test"}
+
 
 def compute_sha256(filename,block_size=4096*16):
     sha256_hash = hashlib.sha256()

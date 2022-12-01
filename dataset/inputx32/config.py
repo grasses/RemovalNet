@@ -10,7 +10,7 @@ import torch
 import argparse
 
 
-def load_cfg():
+def load_cfg(dataset_id):
     parser = argparse.ArgumentParser(description="default model config")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     args, unknown = parser.parse_known_args()

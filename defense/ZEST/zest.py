@@ -18,14 +18,16 @@ from defense import Fingerprinting
 from lime.wrappers.scikit_image import SegmentationAlgorithm
 from utils import helper
 from . import ops
+from utils.ops import set_default_seed
 
 
 class ZEST(Fingerprinting):
-    def __init__(self, model1, model2, test_loader, device, out_root, orders=['1', '2', 'inf', 'cosine']):
+    def __init__(self, model1, model2, test_loader, device, out_root, seed, orders=['1', '2', 'inf', 'cosine']):
         super().__init__(model1, model2, out_root=out_root, device=device)
         self.logger = logging.getLogger("ZEST")
         self.logger.info(f'-> comparing {model1.task} and {model2.task}')
 
+        self.seed = seed
         self.task1 = model1.task
         self.task2 = model2.task
         self.model1 = model1
@@ -33,6 +35,8 @@ class ZEST(Fingerprinting):
         self.seed_size = test_loader.batch_size
         self.test_loader = test_loader
         self.orders = orders
+
+        set_default_seed(seed)
         if not osp.exists(out_root):
             os.makedirs(out_root)
         self.out_root = out_root
@@ -44,14 +48,22 @@ class ZEST(Fingerprinting):
             self.logger.info(f"-> load cache from: {self.fp_path}")
         else:
             self.logger.info(f'-> [compare] step1: generating lime_data')
-            ref_data, unnormalize_ref_data = self.compute_seed_samples()
+            ref_data, raw_ref_data = self.compute_seed_samples()
             self.logger.info(f'-> [compare] step2: generating lime_segment, ref_data={ref_data.shape}')
-            lime_segment = self.get_lime_segment(ref_data=unnormalize_ref_data)
+            lime_segment = self.get_lime_segment(ref_data=raw_ref_data)
             self.logger.info(f'-> [compare] step3: generating lime_mask, lime_segment={lime_segment.shape}')
             ref_dataset, lime_dataset = self.get_lime_dataset(ref_data, lime_segment)
             self.logger.info(f'-> [compare] step4: training lime model')
-            lime_mask1 = self.compute_lime_signature(self.model1, ref_dataset, lime_dataset)
-            lime_mask2 = self.compute_lime_signature(self.model2, ref_dataset, lime_dataset)
+
+            self.out1 = []
+            self.out2 = []
+
+            self.out1, lime_mask1 = self.compute_lime_signature(self.model1, ref_dataset, lime_dataset)
+            self.out2, lime_mask2 = self.compute_lime_signature(self.model2, ref_dataset, lime_dataset)
+            print(
+                torch.norm(torch.from_numpy(self.out1) - torch.from_numpy(self.out2))
+            )
+
             fingerprint = {
                 "ref_data": ref_data,
                 "lime_mask1": lime_mask1,
@@ -73,9 +85,9 @@ class ZEST(Fingerprinting):
         images, labels = next(iter(self.test_loader))
         mean = self.test_loader.mean
         std = self.test_loader.std
-        unnormalize_images = self.test_loader.unnormalize(images, mean=mean, std=std).to('cpu').numpy()
+        raw_images = self.test_loader.unnormalize(images, mean=mean, std=std).to('cpu').numpy() * 255.0
         images = images.to('cpu').numpy()
-        return images, unnormalize_images
+        return images, raw_images
 
     def get_lime_segment(self, ref_data):
         '''
@@ -128,6 +140,7 @@ class ZEST(Fingerprinting):
         self.logger.info(f"-> compute_lime_signature")
         datasets = []
         model.to(self.device)
+        from torch.nn import functional as F
         with torch.no_grad():
             phar = tqdm(range(len(lime_dataset)))
             for i in phar:
@@ -137,6 +150,7 @@ class ZEST(Fingerprinting):
                 outputs = ops.batch_forward(model, inputs, argmax=False).detach().cpu().numpy()
                 datasets.append([lime_data, outputs])
                 phar.set_description(f"-> [{i}/{len(lime_dataset)}] step4.1: compute_lime_signature...")
+                out = outputs
 
         weights = []
         with torch.no_grad():
@@ -148,9 +162,9 @@ class ZEST(Fingerprinting):
                 weights.append(w)
                 phar.set_description(f"-> [{i}/{len(datasets)}] step4.2: compute weights...")
         if cat:
-            return torch.cat(weights)
+            return out, torch.cat(weights)
         else:
-            return weights.to("cpu")
+            return out, weights.to("cpu")
 
     def compute_parameter_distance(self, lime_mask1, lime_mask2, half=False, linear=False, lime=False):
         self.logger.info(f"-> compute_parameter_distance...")
