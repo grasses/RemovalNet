@@ -7,9 +7,10 @@ __copyright__ = 'Copyright © 2022/08/23, homeway'
 
 import random
 import torch
-from torch.autograd import Variable
 from tqdm import tqdm
+from torch.autograd import Variable
 from torchattacks.attack import Attack
+from . import ops
 
 
 class Adv(Attack):
@@ -76,7 +77,7 @@ class Adv(Attack):
             adv_x.append(x.detach().cpu())
 
         batch_x = torch.cat(adv_x).to(self.device)
-        batch_y = self.model(batch_x).argmax(dim=1)
+        batch_y = ops.batch_forward(self.model, batch_x, batch_size=200, argmax=True)
         return batch_x.cpu().detach(), batch_y.cpu().detach()
 
 
