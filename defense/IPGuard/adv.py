@@ -42,32 +42,26 @@ class Adv(Attack):
                 ll.remove(int(i))
                 j = random.choice(ll)
 
-            print(f"-> i:{i}, j:{j} targeted:{targeted}")
             for step in range(steps):
                 x = x.detach()
                 x.requires_grad = True
                 optimizer = torch.optim.Adam([x], lr=lr)
+                optimizer.zero_grad()
 
                 if z.shape[1] > 2:
                     z = self.model(x)
-                    z[0][i] = -999999
-                    z[0][j] = -999999
+                    z[0][i] = -1000
+                    z[0][j] = -1000
                     t = z.argmax(dim=1)[0]
-
-                    optimizer.zero_grad()
                     z = self.model(x)
                     loss = ReLU(z[0][i] - z[0][j] + k) + ReLU(z[0][t] - z[0][i])
-                    loss.backward()
-                    optimizer.step()
                 else:
                     # compatible binary classifier
-                    optimizer.zero_grad()
                     z = self.model(x)
                     loss = ReLU(z[0][i] - z[0][j] + k)
-                    loss.backward()
-                    optimizer.step()
                     t = j
-
+                loss.backward()
+                optimizer.step()
                 phar.set_description(
                     f"-> [IPGuard] idx{idx}-step{step} i:{int(i)} j:{int(j)} t:{int(t)} "
                     f"z_i:{round(float(self.model(x)[0][i]), 6)} z_j:{round(float(self.model(x)[0][j]), 6)} loss:{loss.data}")

@@ -24,7 +24,7 @@ ROOT = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__)
 
 class IPGuard(Fingerprinting):
     def __init__(self, model1, model2, test_loader, out_root, device, k, targeted="L",
-                 steps=1000, test_size=100, seed=100):
+                 steps=1000, test_size=200, seed=100):
         super().__init__(model1, model2, device=device, out_root=out_root)
         self.k = k
         self.steps = steps
@@ -89,7 +89,7 @@ class IPGuard(Fingerprinting):
         y2 = torch.cat(y2)
         matching_rate = round(float(y1.eq(y2.view_as(y1)).sum()) / len(y1), 5)
         self.logger.info(f"-> {self.task1} vs {self.task2} matching_rate:{matching_rate}")
-        return {"matching_rate": matching_rate}
+        return {"MR": matching_rate}
 
     def compare(self):
         return self.verify(self.extract())
@@ -107,7 +107,7 @@ def get_args():
     parser.add_argument("-targeted", action="store", default="L", type=str, help="L:lest-likely R:random", choices=["L","R"])
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-test_size", action="store", default=100, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = ROOT
     args.namespace = format_time
@@ -137,7 +137,7 @@ def main():
     test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id, split="test", shuffle=True)
     ipguard = IPGuard(model1=model1, model2=model2, test_loader=test_loader, device=args.device, out_root=args.fingerprint_root, targeted=args.targeted, k=args.k, seed=args.seed)
     dist = ipguard.compare()
-    print(f"-> IPGuard matching_rate: {dist['matching_rate']}")
+    print(f"-> IPGuard dist: {dist}")
 
 
 
