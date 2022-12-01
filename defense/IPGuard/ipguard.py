@@ -23,13 +23,12 @@ ROOT = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__)
 
 
 class IPGuard(Fingerprinting):
-    def __init__(self, model1, model2, test_loader, out_root, device, batch_size=100,
-                 k=1, steps=1000, test_size=100, targeted="L", seed=1000):
+    def __init__(self, model1, model2, test_loader, out_root, device, k, targeted="L",
+                 steps=1000, test_size=100, seed=100):
         super().__init__(model1, model2, device=device, out_root=out_root)
         self.k = k
         self.steps = steps
         self.test_size = test_size
-        self.batch_size = batch_size
         self.targeted = targeted
 
         # init logger
@@ -54,7 +53,7 @@ class IPGuard(Fingerprinting):
         :return:
         """
         self.logger.info("-> extract fingerprint...")
-        path = osp.join(self.fingerprint_root, f"{self.task1}_{self.dataset}_t{self.targeted}k{self.k}.pt")
+        path = osp.join(self.fingerprint_root, f"{self.dataset}_{self.task1}_t{self.targeted}k{self.k}.pt")
         if osp.exists(path):
             self.logger.info(f"-> load from cache:{path}")
             return torch.load(path, map_location="cpu")
@@ -90,7 +89,7 @@ class IPGuard(Fingerprinting):
         y2 = torch.cat(y2)
         matching_rate = round(float(y1.eq(y2.view_as(y1)).sum()) / len(y1), 5)
         self.logger.info(f"-> {self.task1} vs {self.task2} matching_rate:{matching_rate}")
-        return matching_rate
+        return {"matching_rate": matching_rate}
 
     def compare(self):
         return self.verify(self.extract())
@@ -102,15 +101,13 @@ def get_args():
                         help="Path to the dir of datasets.")
     parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(ROOT, "model/ckpt"),
                         help="Path to the dir of benchmark models.")
-    parser.add_argument("-model1", action="store", dest="model1", default="pretrain(resnet18,ImageNet)-",
-                        required=False, help="model 1.")
-    parser.add_argument("-model2", action="store", dest="model2",
-                        default="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-", required=False, help="model 2.")
-    parser.add_argument("-k", action="store", default=5, type=int, help="k of IPGuard")
-    parser.add_argument("-targeted", action="store", default="L", type=str, help="L:lest-likely R:random", choices=["L", "R"])
+    parser.add_argument("-model1", action="store", dest="model1", default="train(resnet50,CIFAR10)-", required=False, help="model 1.")
+    parser.add_argument("-model2", action="store", dest="model2", default="pretrain(resnet50,CIFAR10)-prune(0.5)-", required=False, help="model 2.")
+    parser.add_argument("-k", action="store", default=0.01, type=float, help="k of IPGuard")
+    parser.add_argument("-targeted", action="store", default="L", type=str, help="L:lest-likely R:random", choices=["L","R"])
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
-    parser.add_argument("-batch_size", action="store", default=200, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-test_size", action="store", default=100, type=int, help="GPU device id")
+    parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = ROOT
     args.namespace = format_time
@@ -138,9 +135,9 @@ def main():
         args.device = torch.device("cpu")
 
     test_loader = dloader.get_dataloader(dataset_id=model1.dataset_id, split="test", shuffle=True)
-    ipguard = IPGuard(model1=model1, model2=model2, test_loader=test_loader, device=args.device, out_root=args.fingerprint_root, k=args.k, seed=args.seed)
-    rate = ipguard.compare()
-    print(f"-> IPGuard matching_rate: {rate}")
+    ipguard = IPGuard(model1=model1, model2=model2, test_loader=test_loader, device=args.device, out_root=args.fingerprint_root, targeted=args.targeted, k=args.k, seed=args.seed)
+    dist = ipguard.compare()
+    print(f"-> IPGuard matching_rate: {dist['matching_rate']}")
 
 
 

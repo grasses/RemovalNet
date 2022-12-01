@@ -30,40 +30,57 @@ class Adv(Attack):
         batch_size = len(labels)
         phar = tqdm(range(batch_size))
         ReLU = torch.nn.ReLU()
+
         for idx in phar:
             x = batch_x[[idx]].clone()
             z = self.model(x)
             i = z.argmax(dim=1)[0]
             if targeted == "L":       # least-like
-                j = z.argmin(dim=0)[0]
+                j = z.argmin(dim=1)[0]
             else:                     # random
                 ll = list(range(z.shape[1]))
                 ll.remove(int(i))
                 j = random.choice(ll)
 
+            print(f"-> i:{i}, j:{j} targeted:{targeted}")
             for step in range(steps):
+                x = x.detach()
                 x.requires_grad = True
-                z = self.model(x)
-                z[0][i] = -1000
-                z[0][j] = -1000
-                t = z.argmax(dim=1)[0]
+                optimizer = torch.optim.Adam([x], lr=lr)
 
-                z = self.model(x)[0]
-                cost = ReLU(z[i] - z[j] + k) + ReLU(z[t] - z[i])
-                grad = torch.autograd.grad(cost, x)[0]
-                x = (x - lr * grad.sign()).detach()
+                if z.shape[1] > 2:
+                    z = self.model(x)
+                    z[0][i] = -999999
+                    z[0][j] = -999999
+                    t = z.argmax(dim=1)[0]
+
+                    optimizer.zero_grad()
+                    z = self.model(x)
+                    loss = ReLU(z[0][i] - z[0][j] + k) + ReLU(z[0][t] - z[0][i])
+                    loss.backward()
+                    optimizer.step()
+                else:
+                    # compatible binary classifier
+                    optimizer.zero_grad()
+                    z = self.model(x)
+                    loss = ReLU(z[0][i] - z[0][j] + k)
+                    loss.backward()
+                    optimizer.step()
+                    t = j
+
                 phar.set_description(
                     f"-> [IPGuard] idx{idx}-step{step} i:{int(i)} j:{int(j)} t:{int(t)} "
-                    f"z_i:{round(float(self.model(x)[0][i]), 6)} z_j:{round(float(self.model(x)[0][j]), 6)} cost:{cost}")
+                    f"z_i:{round(float(self.model(x)[0][i]), 6)} z_j:{round(float(self.model(x)[0][j]), 6)} loss:{loss.data}")
 
                 # ReLU(z_i - z_j + k) ≈ 0
-                if cost <= 1e-4:
+                if loss <= 1e-4:
                     break
 
             z = self.model(x)[0]
             print(f"-> max_logit={round(float(torch.max(z)), 5)}, "
                   f"z_j={round(float(z[j]), 4)} ≥ z_i={round(float(z[i]), 4)} + {k} \n")
             adv_x.append(x.detach().cpu())
+
         batch_x = torch.cat(adv_x).to(self.device)
         batch_y = self.model(batch_x).argmax(dim=1)
         return batch_x.cpu().detach(), batch_y.cpu().detach()
