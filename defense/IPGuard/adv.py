@@ -67,8 +67,8 @@ class Adv(Attack):
                     f"-> [IPGuard] idx{idx}-step{step} i:{int(i)} j:{int(j)} t:{int(t)} "
                     f"z_i:{round(float(self.model(x)[0][i]), 4)} z_j:{round(float(self.model(x)[0][j]), 4)} loss:{round(float(loss.data), 4)}")
 
-                # ReLU(z_i - z_j + k) ≈ 0
-                if loss <= 1e-4:
+                # loss ≈ 0
+                if loss <= 1e-5:
                     break
 
             z = self.model(x)[0]

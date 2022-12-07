@@ -54,6 +54,7 @@ class IPGuard(Fingerprinting):
         """
         self.logger.info("-> extract fingerprint...")
         path = osp.join(self.fingerprint_root, f"{self.dataset}_{self.task1}_t{self.targeted}k{self.k}.pt")
+        print("-> load path", path)
         if osp.exists(path):
             self.logger.info(f"-> load from cache:{path}")
             return torch.load(path, map_location="cpu")

@@ -10,7 +10,7 @@ import random
 import numpy as np
 
 
-def set_default_seed(seed=999):
+def set_default_seed(seed=10000):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

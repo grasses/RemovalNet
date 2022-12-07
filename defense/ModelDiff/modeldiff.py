@@ -84,9 +84,9 @@ class ModelDiff(Fingerprinting):
         ddv = self.compute_similarity_with_ddv(fingerprints)
         mr = self.compute_similarity_with_IPGuard(fingerprints)
         dist = {
-            "ddm": ddm,
-            "ddv": ddv,
-            "mr": mr
+            "DDM": ddm,
+            "DDV": ddv,
+            "MR": mr
         }
         print(f"-> {self.arch1} vs {self.arch2} seed:{self.seed} dist:{dist}")
         return dist
@@ -619,7 +619,7 @@ def get_args():
                         default="pretrain(resnet18,ImageNet)-transfer(Flower102,0.1)-", required=True, help="model 2.")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-seed_method", action="store", default="PGD", type=str, choices=["FGSM", "PGD", "CW"], help="Type of blackbox generation")
-    parser.add_argument("-batch_size", action="store", default=200, type=int, help="GPU device id")
+    parser.add_argument("-batch_size", action="store", default=100, type=int, help="GPU device id")
     parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = helper.ROOT

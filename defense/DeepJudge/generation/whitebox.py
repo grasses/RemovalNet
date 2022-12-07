@@ -27,7 +27,7 @@ class WhiteboxSeeding(BaseSeeding):
         layer_maxs = np.max(outputs, axis=0)
         return (times * layer_maxs)
 
-    def generate(self, seed_x, seed_y, layer_index=4, m=3, alpha=0.001, iters=2000, lr=0.1, target_idx=None):
+    def generate(self, seed_x, seed_y, layer_index=4, m=3, alpha=0.0001, iters=2000, lr=0.1, target_idx=None):
         """
         args:
             seeds: seeds for the generation

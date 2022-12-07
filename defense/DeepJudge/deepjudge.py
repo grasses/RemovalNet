@@ -30,7 +30,7 @@ out_root = osp.join(ROOT, "output")
 class DeepJudge(Fingerprinting):
     def __init__(self, model1, model2, test_loader, device, out_root,
                  blackbox=False, seed_method="PGD", layer_index=4,
-                 batch_size=100, DIGISTS=4, seed=1000):
+                 test_size=1000, batch_size=200, DIGISTS=4, seed=1000):
         super().__init__(model1, model2, device=device, out_root=out_root)
         assert seed_method in ["FGSM", "PGD", "CW", "Random", "IPGuard"]
         self.metrics = ["ROB", "JSD", "LOD", "LAD", "NOD", "NAD", "MR"]
@@ -39,6 +39,7 @@ class DeepJudge(Fingerprinting):
         self.DIGISTS = DIGISTS
         self.layer_index = layer_index
         self.batch_size = batch_size
+        self.test_size = test_size
         self.seed_method = seed_method
 
         # init logger
@@ -65,7 +66,7 @@ class DeepJudge(Fingerprinting):
                                 batch_size=self.batch_size, out_root=self.fingerprint_root)
         Wseed = WhiteboxSeeding(self.model1, task=self.task1, test_loader=self.test_loader, dataset=self.dataset,
                                 batch_size=self.batch_size, out_root=self.fingerprint_root)
-        seed_x, seed_y = Bseed.load_seed_samples()
+        seed_x, seed_y = Bseed.load_seed_samples(num=self.test_size)
 
         # step2: generate test samples
         test_x, test_y = Bseed.generate(seed_x=seed_x, seed_y=seed_y, method=self.seed_method)
@@ -147,10 +148,8 @@ class DeepJudge(Fingerprinting):
         """
         _advx = advx.clone().to(self.device)
         _advy = advy.clone().argmax(dim=1).numpy()
-
         _predy = ops.batch_forward(model, x=_advx, batch_size=self.batch_size, argmax=True)
         _predy = self._numpy(_predy)
-
         dist = round(np.sum(_predy == _advy) / _advy.shape[0], DIGISTS)
         self.logger.info(f"-> metric_ROB() dist={dist}")
         return dist

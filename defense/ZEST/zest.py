@@ -35,12 +35,14 @@ class ZEST(Fingerprinting):
         self.seed_size = test_loader.batch_size
         self.test_loader = test_loader
         self.orders = orders
-
         set_default_seed(seed)
-        if not osp.exists(out_root):
-            os.makedirs(out_root)
+
+        self.fp_root = osp.join(self.fingerprint_root, f"{self.model1.task}")
+        self.fp_path = osp.join(self.fp_root, f"{self.model2.task}_s{self.model2.seed}.pt")
+        for path in [self.fp_root, out_root]:
+            if not osp.exists(path):
+                os.makedirs(path)
         self.out_root = out_root
-        self.fp_path = osp.join(self.fingerprint_root, f"{self.model1.task}_{self.model2.task}_s{self.model2.seed}.pt")
 
     def extract(self, cache=True, **kwargs):
         if cache and osp.exists(self.fp_path):
@@ -107,7 +109,7 @@ class ZEST(Fingerprinting):
         lime_segment = np.stack(temp)
         return lime_segment
 
-    def get_lime_dataset(self, ref_data, lime_segment, mean=np.array([0, 0, 0]), num_samples=1000):
+    def get_lime_dataset(self, ref_data, lime_segment, mean=np.array([0, 0, 0]), num_samples=500):
         if ref_data.shape[1] == 3:
             ref_data = np.moveaxis(ref_data, 1, -1)
         fudged_image = np.zeros(ref_data.shape[1:])

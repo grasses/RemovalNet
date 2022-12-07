@@ -10,6 +10,7 @@ import torch
 from tqdm import tqdm
 from torchattacks.attack import Attack
 from . import BaseSeeding
+from .. import ops
 
 
 class BlackboxSeeding(Attack, BaseSeeding):
@@ -55,6 +56,7 @@ class BlackboxSeeding(Attack, BaseSeeding):
             test_y.append(_y.cpu().detach())
         test_x = torch.cat(test_x)
         test_y = torch.cat(test_y)
+        assert test_x.shape[0] > 0
         self.save_test_samples(seed_x=seed_x, seed_y=seed_y, test_x=test_x, test_y=test_y, tag=f"blackbox-{method}")
         self.logger.info(f"-> generate blackbox test samples done! size:{len(test_y)}")
         return test_x, test_y
@@ -82,7 +84,7 @@ class BlackboxSeeding(Attack, BaseSeeding):
         adv_images = torch.clamp(adv_images, min=self.bounds[0], max=self.bounds[1]).detach()
         return self.targeted_samples(x=adv_images, y=labels, targeted=False)
 
-    def PGD(self, images, labels, eps=0.01, alpha=5.0 / 255.0, steps=40, random_start=True, _targeted=False):
+    def PGD(self, images, labels, eps=0.1, alpha=10.0 / 255.0, steps=40, random_start=True, _targeted=False):
         images = images.clone().detach().to(self.device)
         labels = labels.clone().detach().to(self.device)
         if _targeted:
