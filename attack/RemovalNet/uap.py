@@ -13,9 +13,9 @@ Universal Adversarial Perturbations to Understand Robustness of Texture vs. Shap
 '''
 
 
-def uap_sgd(model, data_loader, nb_epoch, eps=10./255., beta=10, step_decay=0.9,
+def uap_sgd(model, data_loader, nb_epoch, eps=5e-3, beta=1.0, step_decay=0.9,
             y_target=None, loss_fn=None, layer_name=None,
-            uap_init=None, device=torch.device("cuda:1"), steps=500,):
+            uap_init=None, device=torch.device("cuda:0")):
     '''
     INPUT
     model       model
@@ -32,6 +32,10 @@ def uap_sgd(model, data_loader, nb_epoch, eps=10./255., beta=10, step_decay=0.9,
     delta.data  adversarial perturbation
     losses      losses per iteration
     '''
+    model.eval()
+    model.to(device)
+    layer_loss = torch.zeros([1]).to(device)
+
     _, (x_val, y_val) = next(enumerate(data_loader))
     batch_size = len(x_val)
     if uap_init is None:
@@ -41,53 +45,54 @@ def uap_sgd(model, data_loader, nb_epoch, eps=10./255., beta=10, step_decay=0.9,
     losses = []
     delta = batch_delta[0]
 
-    # loss function
-    if layer_name is None:
-        if loss_fn is None: loss_fn = nn.CrossEntropyLoss(reduction='none')
-        beta = torch.tensor([beta], device=device, dtype=torch.float64)
+    if loss_fn is None:
+        loss_fn = nn.CrossEntropyLoss(reduction='none')
+    beta = torch.tensor([beta], device=device, dtype=torch.float64)
 
-        def clamped_loss(output, target):
-            loss = torch.mean(torch.min(loss_fn(output, target), beta))
-            return loss
+    def clamped_loss(output, target):
+        loss = torch.mean(torch.min(loss_fn(output, target), beta))
+        return loss
 
     # layer maximization attack
-    else:
+    if layer_name is not None:
         def get_norm(self, forward_input, forward_output):
-            global main_value
-            main_value = torch.norm(forward_output, p='fro')
+            global layer_loss
+            layer_loss = torch.norm(forward_output, p='fro')
 
         for name, layer in model.named_modules():
             if name == layer_name:
                 handle = layer.register_forward_hook(get_norm)
 
-    model.to(device)
     batch_delta.requires_grad = True
+    nb_steps = int(nb_epoch * len(data_loader))
     for epoch in range(nb_epoch):
         epoch_losses = []
-        print('epoch %i/%i' % (epoch + 1, nb_epoch))
-
-        # perturbation step size with decay
-        eps_step = eps * step_decay
         phar = tqdm(enumerate(data_loader))
-
         loader = iter(data_loader)
-        for i in range(steps):
+        for step in range(len(data_loader)):
             try:
                 x_val, y_val = next(loader)
             except:
                 loader = iter(data_loader)
                 x_val, y_val = next(loader)
+
+            # perturbation step size with decay
+            eps_step = eps * math.pow(step_decay, 1.0 * (step + epoch * len(data_loader)) / nb_steps)
             batch_delta.data = delta.unsqueeze(0).repeat([x_val.shape[0], 1, 1, 1])
+
             # for targeted UAP, switch output labels to y_target
-            if y_target is not None: y_val = torch.ones(size=y_val.shape, dtype=y_val.dtype, device=device) * y_target
+            if y_target is not None:
+                y_val = torch.ones(size=y_val.shape, dtype=y_val.dtype, device=device) * y_target
             perturbed = (x_val + batch_delta).to(device)
             outputs = model(perturbed)
+            ce_loss = clamped_loss(outputs, y_val)
 
-            # loss function value
             if layer_name is None:
-                loss = clamped_loss(outputs, y_val)
+                loss = ce_loss
             else:
-                loss = main_value
+                ce_loss = clamped_loss(outputs, y_val)
+                loss = ce_loss - layer_loss.mean()
+
             if y_target is not None: loss = -loss  # minimize loss for targeted UAP
             losses.append(torch.mean(loss))
             epoch_losses.append(torch.mean(loss))
@@ -97,9 +102,19 @@ def uap_sgd(model, data_loader, nb_epoch, eps=10./255., beta=10, step_decay=0.9,
             grad_sign = batch_delta.grad.data.mean(dim=0).sign()
             delta = delta + grad_sign * eps_step
             batch_delta.grad.data.zero_()
+            preds = outputs.argmax(dim=1).detach()
+            accuracy = 100.0 * (y_val.eq(preds).sum() / len(preds))
 
-            preds = outputs.argmax(dim=1).detach().cpu()
-            phar.set_description(f"-> [Train] UAP:{y_target} epcoh:{epoch} y_target:{y_target} loss:{torch.mean(loss).item()} pred:{preds[:10]}")
+            phar.set_description(
+                f"-> [Train] UAP:{y_target} E:[{epoch+1}/{nb_epoch}] y_target:{y_target} "
+                f"loss:{round(float(loss.data), 4)}=ce_loss:{round(float(ce_loss.data), 4)}+layer_loss:{round(float(layer_loss.mean().data), 4)} "
+                f"pred:{preds[:5]} acc:{accuracy}%")
+
+            # increase learning rate
+            if accuracy < 5.0:
+                eps = eps * 1.02
+            if loss < 1e-5:
+                break
 
     if layer_name is not None: handle.remove()  # release hook
     return delta.data, losses

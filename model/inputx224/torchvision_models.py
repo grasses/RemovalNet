@@ -654,3 +654,7 @@ def vgg19_bn(num_classes=1000, pretrained='imagenet'):
         model = load_pretrained(model, 1000, settings)
     model = modify_vggs(model)
     return model
+
+
+
+model = vgg19_bn(num_classes=1000)

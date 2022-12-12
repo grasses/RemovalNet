@@ -28,7 +28,6 @@ def load_model(dataset_id, arch_id, pretrained=False, pretrain=None, **kwargs):
     elif dataset_id in dloader.task_list["CV224"]:
         from model.inputx224 import vgg19_bn, vgg13_bn, vgg11_bn, vgg16_bn
         from model.inputx224 import resnet50, alexnet, densenet121, mobilenet_v2
-        #from model.inputx224.vit import *
     else:
         raise NotImplementedError()
 

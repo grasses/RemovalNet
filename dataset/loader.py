@@ -16,15 +16,17 @@ from torchvision import transforms
 from utils import ops
 from . import inputx32, inputx64, inputx224
 from dataset.inputx32 import CIFAR10, CINIC10
-from dataset import MIT67, SDog120, Flower102, Caltech257Data, Stanford40Data, CUB200Data, ImageNet
+from dataset.inputx224.lfw import LFW
 from dataset.inputx224.celeba import CelebA
+from dataset.inputx224.imagenet import ImageNet
+
 
 DATA_ROOT = osp.join(osp.abspath(osp.dirname(__file__)), "data")
 logger = logging.getLogger('DataLoader')
 
 task_list = {
     "CV32": ["CIFAR10", "CIFAR100", "CINIC10"],
-    "CV224": ["CelebA", "ImageNet"],
+    "CV224": ["CelebA", "ImageNet", "LFW"],
     "AUDIO": ["SpeechCommands"],
 }
 for i in range(40):
@@ -41,6 +43,7 @@ def get_num_classess(dataset_id):
         "CIFAR10": 10,
         "CINIC10": 10,
         "CelebA": 2,
+        "LFW": 2,
         "ImageNet": 1000,
     }
     for i in range(40):
@@ -52,6 +55,7 @@ def get_size(dataset_id):
     INPUT_SIZE = {
         "CIFAR10": 32,
         "CINIC10": 32,
+        "LFW": 224,
         "CelebA": 224,
         "Flower102": 224,
         "ImageNet": 224,
@@ -82,7 +86,7 @@ def get_bounds(mean, std):
     return bounds
 
 
-def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True):
+def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True, subset_ratio=1.0):
     """
     Get dataloader.
     :param dataset_id:
@@ -97,7 +101,8 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True):
         dataset_id, shots = dataset_id.split("+")
 
     datapath = os.path.join(DATA_ROOT, dataset_id)
-    assert os.path.exists(datapath)
+    if not os.path.exists(datapath):
+        raise FileNotFoundError(f"-> datapath: {datapath}")
 
     cfg = load_cfg(dataset_id=dataset_id, arch_id="")
     normalize = torchvision.transforms.Normalize(mean=cfg.mean, std=cfg.std)
@@ -126,6 +131,13 @@ def get_dataloader(dataset_id, split='train', batch_size=100, shuffle=True):
         )
     else:
         raise NotImplementedError()
+
+    if subset_ratio < 1.0:
+        size = len(dataset)
+        idxs = np.random.choice(size, int(size * subset_ratio), replace=False).tolist()
+        print(f"-> Load {int(subset_ratio*100)}% subset of {dataset_id} {len(idxs)}/{size}")
+        dataset = torch.utils.data.Subset(dataset, idxs)
+        dataset.num_classes = get_num_classess(dataset_id)
 
     data_loader = torch.utils.data.DataLoader(
         dataset,

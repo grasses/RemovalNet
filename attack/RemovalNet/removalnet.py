@@ -5,36 +5,33 @@ __author__ = 'homeway'
 __copyright__ = 'Copyright © 2022/08/31, homeway'
 
 
-import os, pytz
+import os
 import argparse
 import os.path as osp
 import logging
-import datetime
 import torch
-import random
+import random, json
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm
-from attack.tap import tap_sgd
 from attack import ops
 from torch import optim
 from utils import metric, helper, vis
 from torchmetrics.functional import pairwise_cosine_similarity
-format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
-ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
 
-class DeepRemoval:
+
+class RemovalNet:
     def __init__(self, model_T, model_t, cfg, train_loader, test_loader):
         self.cfg = cfg
         self.seed = cfg.seed
         self.device = cfg.device
         self.batch_size = cfg.batch_size
-        self.torch_model_path = cfg.models_dir
+        self.torch_model_path = cfg.models_root
         self.logger = logging.getLogger('RemovalNet')
-        self.output_dir = cfg.output_dir
-        if not osp.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+        for path in [cfg.exp_root, cfg.proj_root, cfg.out_root]:
+            if not osp.exists(path):
+                os.makedirs(path)
 
         self.learning_data = {
             "t": [],
@@ -95,37 +92,46 @@ class DeepRemoval:
             raise NotImplementedError()
         return loss_dist
 
-    def feature_poison(self, model, x, y, l=2, lr=0.1, poison_steps=20, theta=0.5, ydist="l2"):
+    def feature_removal(self, model, x, y, l=2, lr=0.1, poison_steps=20, ydist="l2"):
         # z = x -> f(x)^{l}  // z is latent space, maximize z & z_prime
         z = ops.batch_fed_forward(model, x, layer_index=l, batch_size=self.batch_size).detach().contiguous().to(self.device)
-        z_prime = torch.rand(z.shape, device=self.device, requires_grad=True)
-        normalized_z = self.normalize(z)
+        z_prime = torch.exp(torch.rand(z.shape, device=self.device, requires_grad=True)) - 1.0
+        batch_size = len(x)
 
         for step in range(poison_steps):
+            for i in range(batch_size):
+                y_i = y[i].unsqueeze(0).detach()
+                z_i = z[i].unsqueeze(0).detach()
+                z_prime_i = z_prime[i].unsqueeze(0)
+                z_prime_i = z_prime_i.detach()
+                z_prime_i.requires_grad = True
+                logit_i = model.mid_forward(z_prime_i, layer_index=l)
+
+                # minimize CELoss & maximize cosine dist
+                #loss_dist = torch.exp(-self.distance(z_prime_i, z_i, ydist))
+                loss_dist = torch.log(self.distance(z_prime_i, z_i, ydist))
+                pred_y_i = logit_i.argmax(dim=1)
+                loss = -loss_dist
+                if pred_y_i != y_i:
+                    loss_ce = F.cross_entropy(logit_i, y_i)
+                    loss += loss_ce
+                grad = torch.autograd.grad(loss, [z_prime_i], retain_graph=False, create_graph=False)[0]
+                z_prime_i = z_prime_i - lr * grad.sign()
+                z_prime[i] = z_prime_i.squeeze(0).data
             z_prime = z_prime.detach()
-            z_prime.requires_grad = True
-            logit_t = model.mid_forward(z_prime, layer_index=l)
 
-            # minimize CELoss & maximize cosine dist
-            loss_dist = torch.log(self.distance(z, z_prime, ydist))
-            loss_ce = F.cross_entropy(logit_t, y)
-
-            loss = loss_ce - 0.1 * loss_dist
-            grad = torch.autograd.grad(loss, [z_prime], retain_graph=False, create_graph=False)[0]
-            z_prime = z_prime.detach() - lr * grad.sign()
-
-            # selected clip & random activate
-            for idx in range(z.shape[0]):
-                z_prime[idx][normalized_z[idx] > theta] = 0.0
-
+        logit_t = model.mid_forward(z_prime, layer_index=l)
+        loss_dist = torch.log(self.distance(z_prime, z, ydist))
+        loss_ce = F.cross_entropy(logit_t, y)
+        loss = loss_ce - loss_dist
         pred = logit_t.argmax(dim=1).detach()
         acc = (100.0 * pred.eq(y).sum() / len(y)).item()
-        print(f"-> [Feature-Level] acc:{acc}% y:{y[:5].tolist()} pred:{pred[:5].tolist()} loss:{loss.item()} = ce_loss:{loss_ce.item()} + {ydist}_dist:{loss_dist.item()}")
+        print(f"-> [Feature-Level] y:{y[:4].tolist()} pred_y:{pred[:4].tolist()} feat_acc:{acc}%  loss:{loss.item()}=ce_loss:{loss_ce.item()}-{ydist}_dist:{loss_dist.item()}")
         return z_prime.clone().detach()
 
-    def boundary_poison(self, model, x, y, ydist="l2"):
+    def logit_removal(self, model, x, y, ydist="l2"):
         with torch.no_grad():
-            logits = model(x)
+            logits = F.softmax(model(x), dim=1)
             batch_size = len(logits)
             if ydist == "l2":
                 dist = torch.cdist(logits, logits)
@@ -135,7 +141,6 @@ class DeepRemoval:
                 idxs = torch.argmin(dist, dim=1).tolist()
             else:
                 raise NotImplementedError()
-
             beta_list = []
             logits_prime = logits.clone()
             h = lambda a, b, alpha: beta * a + (1 - beta) * b
@@ -147,7 +152,7 @@ class DeepRemoval:
                         beta_list.append(round(beta, 2))
                         break
             norm = (logits_prime-logits).norm(p=2).mean().detach().cpu()
-            print(f"-> [Boundary-Level] beta:{beta_list[:8]} logits_norm:{norm}")
+            print(f"-> [Logit - Level] beta:{beta_list[:8]} logits_norm:{norm}")
             return logits_prime.detach()
 
     def data_augmentation(self, model_T, model_t, x, y, l, lr=0.01, steps=20):
@@ -177,24 +182,30 @@ class DeepRemoval:
         print(f"-> [Data Augmention] acc:{acc.item()} loss:{loss.item()} x_norm:{torch.norm(x-adv_x, p=2)}")
         return adv_x.detach()
 
-    def data_augmentation_uaps(self, model_T, data_loader):
-        from attack.uap import uap_sgd
+    def data_augmentation_uaps(self, model_T, data_loader, layer_name=None):
+        from .uap import uap_sgd
+        cfg = self.cfg
         model_T.eval()
         model_T.to(self.device)
         x_val, y_val = next(iter(data_loader))
-
-        uaps = []
+        uaps_path = osp.join(self.cfg.proj_root, f"cache/uaps_{self.task}_sub{cfg.subset}.pth")
+        if not osp.exists(uaps_path):
+            uaps = []
+            for c in range(self.num_classes):
+                uap_init = torch.randn(*x_val.shape[1:])
+                uap, losses = uap_sgd(model_T, data_loader, nb_epoch=8, y_target=c, uap_init=uap_init, device=self.device)
+                uaps.append(uap)
+            torch.save(uaps, uaps_path)
+        uaps = torch.load(uaps_path, map_location="cpu")
         for c in range(self.num_classes):
-            uap_init = torch.randn(*x_val.shape[1:])
-            uap, losses = uap_sgd(model_T, data_loader, nb_epoch=1, y_target=c, uap_init=uap_init, device=self.device)
-            uaps.append(uap)
-
             # for test
             batch_delta = torch.zeros_like(x_val)
             batch_delta.data = uaps[c].data.unsqueeze(0).repeat([x_val.shape[0], 1, 1, 1])
             perturbed = (x_val + batch_delta).to(self.device)
             preds = model_T(perturbed).argmax(dim=1).detach().cpu()
-            print(f"-> UAP for:{c} losses:{torch.mean(torch.tensor(losses)).item()} preds:{preds[:10]}")
+            target = torch.ones([len(x_val)], dtype=preds.dtype, device=preds.device) * c
+            acc = 100.0 * (target.eq(preds).sum() / len(x_val))
+            print(f"-> UAP:{c} preds_acc:{acc}%")
         return uaps
 
     def deepremoval_step(self, model_T, model_t, optimizer, x, y, l, t=0):
@@ -203,14 +214,14 @@ class DeepRemoval:
         model_t.eval()
 
         # remove feature-level fingerprints
-        feats_prime = self.feature_poison(model=model_t, x=x, y=y, l=l, ydist=self.cfg.ydist, poison_steps=self.cfg.poison_steps).detach()
+        feats_prime = self.feature_removal(model=model_t, x=x, y=y, l=l, ydist=self.cfg.ydist, poison_steps=self.cfg.poison_steps).detach()
         # remove logit-level fingerprints
-        logit_prime = self.boundary_poison(model=model_t, x=x, y=y, ydist=self.cfg.ydist).detach()
+        logit_prime = self.logit_removal(model=model_t, x=x, y=y, ydist=self.cfg.ydist).detach()
 
         model_t.train()
         optimizer.zero_grad()
         logit = model_t(x)
-        loss_dist = F.mse_loss(model_t.fed_forward(x, layer_index=l), feats_prime, reduction="mean")
+        loss_dist = self.cfg.beta * F.mse_loss(model_t.fed_forward(x, layer_index=l), feats_prime, reduction="mean")
         loss_kd = cfg.T * cfg.T * cfg.alpha * F.kl_div(
                 F.log_softmax(logit / self.cfg.T, dim=1),
                 F.softmax(logit_prime / self.cfg.T, dim=1), reduction='batchmean') + \
@@ -231,65 +242,123 @@ class DeepRemoval:
             weight_decay=cfg.weight_decay
         )
 
-        loader = iter(self.train_loader)
-        val_x, val_y = next(loader)
-        val_x, val_y = val_x.to(self.device), val_y.to(self.device)
+        # prepare LayerCAM preview image
+        eval_batch = []
+        def get_eval_batch(model, loader, device, preview_off=30, preview_size=30):
+            eval_x, eval_y = next(iter(loader))
+            eval_x = eval_x[preview_off:preview_off+preview_size]
+            mean, std = self.test_loader.mean, self.test_loader.std
+            eval_ori_x = self.test_loader.unnormalize(eval_x, mean, std, clamp=True)[:preview_size]
+            with torch.no_grad():
+                eval_y = model(eval_x.to(device)).argmax(dim=1).detach().cpu()
+                return [eval_x, eval_y, eval_ori_x]
+        eval_batch.append(get_eval_batch(model=self.model_T, loader=self.train_loader, device=self.device))
+        eval_batch.append(get_eval_batch(model=self.model_T, loader=self.test_loader, device=self.device))
 
-        for step in range(1, 1+iterations):
+        # uap data augmentation
+        #uaps = self.data_augmentation_uaps(self.model_T, data_loader=self.train_loader)
+        for step in range(0, 1+iterations):
             try:
                 batch, label = next(loader)
             except:
                 loader = iter(self.train_loader)
                 batch, label = next(loader)
+
+            '''
+            aug_size = int(0.1 * len(batch))
+            x_adv = batch[:aug_size].clone().to(self.device)
+            idxs = []
+            for idx in range(len(x_adv)):
+                idx = int(np.random.choice(np.arange(self.test_loader.num_classes)))
+                x_adv.data = x_adv.data + uaps[idx].to(self.device).data
+                idxs.append(idx)
+            print(f"-> [Data Augmentation] select:{idxs}")
+            x_adv = x_adv.detach().to(self.device)
+            '''
+
+            '''
+            self.model_T.eval()
+            self.model_t.eval()
+            aug_size = int(0.1 * len(batch))
+            x_ben = batch[:aug_size].clone().to(self.device)
+            x_adv = x_ben.detach().to(self.device)
+            y_ben = self.model_T(x_ben).argmax(dim=1).long().detach()
+            
+            for step in range(20):
+                x_adv = x_adv.detach()
+                x_adv.requires_grad = True
+                optimizer_x = torch.optim.SGD([x_adv], lr=1e-3)
+
+                out_adv_t = self.model_t(x_adv)
+                out_adv_T = self.model_T(x_adv)
+                out_ben_T = self.model_T(x_ben)
+                optimizer_x.zero_grad()
+                loss1 = F.kl_div(out_adv_T, out_adv_t, reduction="mean")
+                loss2 = F.kl_div(out_adv_T, out_ben_T, reduction="mean")
+                #loss2 = F.cross_entropy(out_adv_T, y_ben)
+                loss = loss1 - loss2
+                loss.backward()
+                optimizer_x.step()
+                y_adv = self.model_T(x_adv).argmax(dim=1).long().detach()
+                print(f"-> [Augmentation] step:{step} y_ben:{y_ben.tolist()} y_adv:{y_adv.tolist()} "
+                    f"loss:{round(loss.item(), 3)}=loss1:{round(loss1.item(), 3)}-loss2:{round(loss2.item(), 3)}")
+            x_adv = x_adv.detach().to(self.device)
+            '''
+
             x, y = batch.to(self.device), label.to(self.device)
+            #x = torch.cat([x, x_adv]).detach()
             y = self.model_T(x).argmax(dim=1).long().detach()
 
-            l = random.randint(2, 3)
-            loss, loss_dist, loss_kd = self.deepremoval_step(self.model_T, self.model_t, optimizer, x=x, y=y, l=l)
+            l = 4 #random.randint(3, 4)
+            loss, loss_dist, loss_kd = self.deepremoval_step(self.model_T, self.model_t, optimizer, x=x, y=y, l=l, t=step)
 
             # testing & visualization
-            if step % cfg.test_interval == 0 or (step == iterations - 1):
+            if step == 0 or step % cfg.test_interval == 0 or (step == iterations - 1):
                 _best_topk_acc, topk_acc, test_loss = metric.topk_test(self.model_t, self.test_loader, device=self.device, epoch=step, debug=True)
                 self.learning_data["t"].append(step)
                 self.learning_data["acc"].append(topk_acc["top1"])
                 self.learning_data["loss_dist"].append(ops.numpy(loss_dist))
                 self.learning_data["loss_kd"].append(ops.numpy(loss_kd))
-                vis.view_learning_state(self.learning_data, file_path=osp.join(self.output_dir, "LR"))
+                vis.view_learning_state(self.learning_data, file_path=osp.join(self.cfg.exp_root, "LR"))
+                self.save_torch_model(self.model_t.cpu(), step=step)
 
-            if step % cfg.plot_interval == 0:
+            if step == 0 or step % cfg.plot_interval == 0 or (step == iterations - 1):
                 # plot LayerCAM
-                for l in np.arange(4):
-                    fig_path = osp.join(self.output_dir, f"LayerCam_{cfg.layers[l]}_t{step}")
-                    vis.view_layer_activation(self.model_T, self.model_t, x=val_x, y=val_y, target_layer=cfg.layers[l], fig_path=fig_path, device=self.device)
+                choice = random.randint(0, 1)
+                eval_x, eval_y, eval_ori_x = eval_batch[choice]
+                for l in np.arange(2, 4):
+                    fig_path = osp.join(self.cfg.exp_root, f"LayerCam_{cfg.layers[l]}_t{step}")
+                    vis.view_layer_activation(self.model_T, self.model_t, x=eval_x.clone(), y=eval_y.clone(), ori_x=eval_ori_x.clone(),
+                                              size=len(eval_x), target_layer=cfg.layers[l], fig_path=fig_path, device=self.device)
                 # plot decision boundary
-                fig_path = osp.join(self.output_dir, f"Boundary")
+                fig_path = osp.join(self.cfg.exp_root, f"Boundary")
                 acc1, acc2 = vis.view_decision_boundary(self.model_T, self.model_t, self.test_loader, fig_path=fig_path, step=step)
                 print(f"-> For T:{step} [Train] model_T:{acc1}% model_t:{acc2}% loss:{loss.item()} loss_dist:{loss_dist.item()} loss_kd:{loss_kd.item()}")
-                self.save_torch_model(self.model_t.cpu(), step=10*int(step/10))
             print()
         self.save_torch_model(self.model_t.cpu())
 
 
 def get_args():
     parser = argparse.ArgumentParser(description="Build micro benchmark.")
-    parser.add_argument("-datasets_dir", action="store", dest="datasets_dir", default=osp.join(ROOT, "dataset/data"),
+    parser.add_argument("-datasets_dir", action="store", dest="datasets_dir", default=osp.join(helper.ROOT, "dataset/data"),
                         help="Path to the dir of datasets.")
-    parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(ROOT, "model/ckpt"),
+    parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(helper.ROOT, "model/ckpt"),
                         help="Path to the dir of benchmark models.")
     parser.add_argument("-model1", action="store", dest="model1", required=True, help="model 1.")
     parser.add_argument("-model2", action="store", dest="model2", help="model 1.")
     parser.add_argument("-subset", type=str, required=True, help="substitute dataset of removalnet")
+    parser.add_argument("-subset_ratio", type=float, required=True, help="substitute dataset rate of removalnet")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-ydist", action="store", default="l2", type=str, choices=["l2", "cosine", "kl"], help="distance of adv logits")
     parser.add_argument("-batch_size", action="store", default=100, type=int, help="GPU device id")
     parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-tag", type=str, required=True, help="Some words on this work")
     args, unknown = parser.parse_known_args()
-    args.ROOT = ROOT
-    args.namespace = format_time
+    args.ROOT = helper.ROOT
+    args.namespace = helper.format_time
     args.out_root = osp.join(args.ROOT, "output")
     args.logs_root = osp.join(args.ROOT, "logs")
-    args.removal_root = osp.join(args.out_root, "RemovalNet")
-    args.output_dir = ""
+    args.proj_root = osp.join(args.out_root, "Removal")
 
     args.alpha = 0.05
     args.T = 10
@@ -297,27 +366,54 @@ def get_args():
     args.weight_decay = 1e-4
     args.layers = ["layer1", "layer2", "layer3", "layer4", "layer5"]
     if "CIFAR10" in args.model1:
-        args.alpha = 0.01
-        args.T = 5
+        args.T = 10
+        args.alpha = 0.1122
+        args.beta = 0.5
         args.lr = 1e-2
         args.poison_steps = 20
-        args.test_interval = 1
-        args.plot_interval = 10
+        args.test_interval = 20
+        args.plot_interval = 100
         args.iterations = 1000
+
     elif "ImageNet" in args.model1:
         args.lr = 1e-2
+        args.alpha = 0.111
+        args.beta = 0.5
+        args.T = 10
         args.poison_steps = 30
-        args.plot_interval = 10
+        args.plot_interval = 20
+        args.test_interval = 100
+        args.iterations = 1000
+
+    elif "CelebA" in args.model1:
+        args.lr = 1e-2
+        args.alpha = 0.1
+        args.beta = 0.5
+        args.T = 20
+        args.poison_steps = 30
         args.test_interval = 20
+        args.plot_interval = 100
+        args.iterations = 1000
+
+    if "LFW" in args.subset:
+        args.lr = 1e-2
+        args.alpha = 0.1
+        args.beta = 0.8
+        args.T = 10
+        args.poison_steps = 30
+        args.test_interval = 20
+        args.plot_interval = 100
         args.iterations = 1000
 
     if "densenet" in args.model1:
         args.layers = ["features.pool0", "features.denseblock1", "features.denseblock2", "features.denseblock3", "features.denseblock4"]
     elif "mobile" in args.model1:
         args.layers = ["features.3", "features.6", "features.10", "features.16", "features.18"]
+    elif "resnet" in args.model1:
+        args.layers = ["layer1", "layer2", "layer3", "layer4", "layer3"]
 
     helper.set_default_seed(args.seed)
-    args.lr = args.lr * (1 + 0.2 * random.random())
+    args.lr = args.lr * (1.0 + 0.2 * random.random())
     return args
 
 
@@ -326,22 +422,42 @@ from dataset import loader
 def main():
     args = get_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s")
-    benchmk = benchmark.ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir)
+
+    arch, dataset = args.model1.split("(")[1].split(")")[0].split(",")
+    benchmk = benchmark.ImageBenchmark(datasets=dataset, archs=[arch], datasets_dir=args.datasets_dir, models_dir=args.models_dir)
     model0 = benchmk.load_wrapper(args.model1).load_torch_model()
     model1 = benchmk.load_wrapper(args.model1).load_torch_model() # a deepcopy of model1
 
     # substitute dataset to train model
-    train_loader = loader.get_dataloader(args.subset, split="train", batch_size=100)
-    test_loader = loader.get_dataloader(model1.dataset_id, split="test", batch_size=500)
-
-    removalnet = f"removalnet({args.subset},{args.alpha},{args.T},{args.ydist})-"
-    model_name = f"{str(model1.task)}{removalnet}"
+    train_loader = loader.get_dataloader(args.subset, split="train", batch_size=args.batch_size, subset_ratio=args.subset_ratio)
+    test_loader = loader.get_dataloader(dataset, split="test", shuffle=False, batch_size=args.batch_size)
+    removalnet = f"removalnet({args.subset},{'{:.1f}'.format(args.subset_ratio)},{args.alpha},{args.beta},{args.T},{args.ydist})-"
 
     args.task = model1.task
-    args.models_dir = osp.join(args.models_dir, f'{model_name}')
-    args.output_dir = osp.join(helper.ROOT, "output/Removal", model_name)
+    args.attack_name = f"{str(model1.task)}{removalnet}"
+    args.models_root = osp.join(args.models_dir, f'{args.attack_name}')
+    args.exp_root = osp.join(helper.ROOT, "output/Removal/exp", args.attack_name)
 
-    removal = DeepRemoval(model0, model1, args, train_loader=train_loader, test_loader=test_loader)
+    removal = RemovalNet(model0, model1, args, train_loader=train_loader, test_loader=test_loader)
+    data = {
+        "tag": args.tag,
+        "poison_steps": args.poison_steps,
+        "plot_interval": args.plot_interval,
+        "test_interval": args.test_interval,
+        "arch": arch,
+        "dataset": dataset,
+        "subset": args.subset,
+        "lr": args.lr,
+        "seed": args.seed,
+        "batch_size": args.batch_size,
+        "layers": args.layers,
+        "namespace": str(args.namespace)
+    }
+    for k, v in vars(args).items():
+        if type in [list, int, str]:
+            data[k] = v
+    with open(osp.join(args.exp_root, "conf.json"), "w") as f:
+        json.dump(data, f)
     removal.deepremoval()
 
 
@@ -350,7 +466,7 @@ if __name__ == "__main__":
     """
         Example command:
         <===========================  Flower102-resnet18:20220901_Test  ===========================>
-        SCRIPT="attack.deepremoval"
+        SCRIPT="attack.RemovalNet.removalnet"
         python -m $SCRIPT -model1 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-" -model2 "" -device 2
     """
 

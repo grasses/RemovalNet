@@ -19,6 +19,7 @@ def tap_sgd(model1, model2, x, y, lr=0.1, step_decay=0.9, steps=40, device=torch
     for idx in range(batch_size):
         min_dist = 100.0
         best_x = None
+
         adv_x = x[idx].unsqueeze(0)
         adv_x.requires_grad = True
         adv_x = adv_x.to(device)

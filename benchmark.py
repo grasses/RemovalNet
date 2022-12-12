@@ -8,6 +8,7 @@ import re
 import os
 import logging
 import torch
+import shutil
 import numpy as np
 from model import loader as mloader
 from dataset import loader as dloader
@@ -15,10 +16,8 @@ from utils import helper, metric
 from attack.finetuner import Finetuner
 from attack.trainer import Trainer
 from attack.weight_pruner import WeightPruner
-import pytz, datetime, argparse
+import argparse
 import os.path as osp
-curr_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
-ROOT = os.path.abspath(os.path.dirname(__file__))
 CONTINUE_TRAIN = False
 
 
@@ -36,14 +35,11 @@ class ModelWrapper:
         self.fc = fc
         self.seed = 1000 if (teacher_wrapper is None) else int(seed)
         self.ckpt_path = os.path.join(self.torch_model_path, f'final_ckpt_s{seed}.pth')
-        helper.set_default_seed(self.seed)
         self.cfg = dloader.load_cfg(self.dataset_id, self.arch_id)
         for k, v in kwargs.items():
             setattr(self, k, v)
-
         if "quantize" in trans_str:
             self.cfg.device = torch.device("cpu")
-
         assert self.arch_id is not None
         assert self.dataset_id is not None
 
@@ -83,7 +79,8 @@ class ModelWrapper:
             "top3": 0,
             "top5": 0
         }
-        if self.dataset_id == "ImageNet": return topk_acc
+        if self.dataset_id == "ImageNet":
+            return topk_acc
         test_loader = dloader.get_dataloader(self.dataset_id, split='test')
         _, topk_acc, _ = metric.topk_test(torch_model, test_loader, epoch=0, debug=True, device=self.cfg.device)
         return topk_acc
@@ -125,16 +122,23 @@ class ModelWrapper:
         :return: torch.nn.Module object
         """
         torch_model = mloader.load_model(self.dataset_id, self.arch_id, pretrained=False)
+        ckpt = torch.load(self.ckpt_path, map_location="cpu")
+
         m = re.match(r'(\S+)\((\S*)\)', self.trans_str)
         method = m.group(1)
         params = m.group(2).split(',')
         if method == 'quantize':
             dtype = params[0]
             dtype = torch.qint8 if dtype == 'qint8' else torch.float16
-            torch_model = torch.quantization.quantize_dynamic(torch_model, dtype=dtype)
-        print(f"-> load model from:{self.ckpt_path}")
-        ckpt = torch.load(self.ckpt_path, map_location="cpu")
-        torch_model.load_state_dict(ckpt['state_dict'], strict=True)
+            # load from teacher model & quantize
+            self.teacher_wrapper.gen_model(seed=1000)
+            teacher_model = self.teacher_wrapper.load_torch_model()
+            torch_model.load_state_dict(teacher_model.state_dict(), strict=True)
+            torch_model = torch.quantization.quantize_dynamic(torch_model, qconfig_spec={torch.nn.Linear}, inplace=True, dtype=dtype)
+            print("-> load model from: quantize!!!!!")
+        else:
+            torch_model.load_state_dict(ckpt['state_dict'], strict=True)
+            print(f"-> load model from:{self.ckpt_path}")
         torch_model.seed = self.seed
         torch_model.task = self.__str__()
         torch_model.arch_id = self.arch_id
@@ -154,7 +158,6 @@ class ModelWrapper:
         self.seed = seed
         helper.set_default_seed(self.seed)
         trans_str = self.trans_str
-
         if not regenerate and self.torch_model_exists():
             self.logger.info(f'-> model already exists: {self.__str__()}')
             return
@@ -164,8 +167,7 @@ class ModelWrapper:
         method = m.group(1)
         params = m.group(2).split(',')
 
-        if regenerate and os.path.exists(self.torch_model_path):
-            import shutil
+        if regenerate and os.path.exists(self.torch_model_path) and (method != 'quantize'):
             shutil.rmtree(self.torch_model_path)
         if not os.path.exists(self.torch_model_path):
             os.makedirs(self.torch_model_path)
@@ -210,7 +212,6 @@ class ModelWrapper:
             cfg.network = self.arch_id
             cfg.ft_ratio = 1
             cfg.reinit = True
-            cfg.lr = 1e-2
             cfg.weight_decay = 5e-3
             cfg.momentum = 0.9
             if CONTINUE_TRAIN:
@@ -225,12 +226,11 @@ class ModelWrapper:
             self.save_torch_model(torch_model)
 
         elif method == 'quantize':
-            # TODO: REWRITE
             dtype = params[0]
             dtype = torch.qint8 if dtype == 'qint8' else torch.float16
             student_model = mloader.load_model(dataset_id=self.dataset_id, arch_id=self.arch_id)
             student_model.load_state_dict(teacher_model.state_dict(), strict=True)
-            student_model = torch.quantization.quantize_dynamic(student_model, dtype=dtype)
+            student_model = torch.quantization.quantize_dynamic(student_model, dtype=dtype, inplace=True)
             self.save_torch_model(student_model, seed=seed)
 
         elif method == 'prune':
@@ -274,14 +274,32 @@ class ModelWrapper:
             finetuner.train()
             self.save_torch_model(student_model, seed=seed)
 
+        elif method == 'retraining':
+            dataset_id = params[0]
+            tune_ratio = float(params[1])
+            cfg.ft_ratio = tune_ratio
+            cfg.retrain_linear = True
+            cfg.network = self.arch_id
+            student_model = mloader.load_model(dataset_id=dataset_id, arch_id=self.arch_id)
+            student_model.load_state_dict(teacher_model.state_dict(), strict=True)
+            if CONTINUE_TRAIN:
+                student_model = self.load_saved_weights(student_model)  # continue training
+            finetuner = Finetuner(
+                cfg,
+                student_model, teacher_model,
+                train_loader, test_loader,
+                init_models=True
+            )
+            finetuner.train()
+            self.save_torch_model(student_model, seed=seed)
+
         elif method == 'distill':
             cfg.feat_lmda = 1
             cfg.network = self.arch_id
             cfg.weight_decay = 5e-3
             cfg.momentum = 0.9
             cfg.lr = 5e-3
-            if "resnet" in self.arch_id:
-                cfg.lr /= 5.0
+            cfg.reinit = False
             cfg.retrain_linear = float(params[0])
             student_model = mloader.load_model(
                 dataset_id=self.dataset_id,
@@ -392,6 +410,20 @@ class ModelWrapper:
         )
         return model_wrapper
 
+    def retraining(self, dataset_id, tune_ratio=0.1, iters=10000, seed=1000, **kwargs):
+        trans_str = f'retraining({dataset_id},{tune_ratio})'
+        # model_wrapper is the wrapper of the student model
+        model_wrapper = ModelWrapper(
+            benchmark=self.benchmark,
+            teacher_wrapper=self,
+            trans_str=trans_str,
+            dataset_id=dataset_id,
+            iters=iters,
+            seed=seed,
+            **kwargs
+        )
+        return model_wrapper
+
     def distill(self, retrain_ratio, iters=10000, seed=1000, **kwargs):
         trans_str = f'distill({retrain_ratio})'
         model_wrapper = ModelWrapper(
@@ -450,10 +482,10 @@ class ModelWrapper:
 
 
 class ImageBenchmark:
-    def __init__(self, datasets=["CIFAR10"], archs=["resnet34", "vgg16_bn"], datasets_dir='dataset/data', models_dir='model/ckpt'):
+    def __init__(self, datasets, archs, datasets_dir='dataset/data', models_dir='model/ckpt'):
         self.logger = logging.getLogger('ImageBench')
         self.datasets = datasets
-        self.archs = archs
+        self.archs = [archs] if type(archs) == str else archs
         self.datasets_dir = datasets_dir
         self.models_dir = models_dir
 
@@ -520,11 +552,12 @@ class ImageBenchmark:
         target_model = source_model
         for item in list(m[1:]):
             gen_type, params = extract(item)
-
             if gen_type == "transfer":
                 target_model = target_model.transfer(dataset_id=params[0], tune_ratio=params[1], seed=seed, **kwargs)
             elif gen_type == "finetune":
                 target_model = target_model.finetune(dataset_id=params[0], tune_ratio=params[1], seed=seed, **kwargs)
+            elif gen_type == "retraining":
+                target_model = target_model.retraining(dataset_id=params[0], tune_ratio=params[1], seed=seed, **kwargs)
             elif gen_type == "distill":
                 target_model = target_model.distill(retrain_ratio=params[0], seed=seed, **kwargs)
             elif gen_type == "prune":
@@ -536,13 +569,13 @@ class ImageBenchmark:
             elif gen_type == "negative":
                 target_model = target_model.negative(params[0], seed=seed, **kwargs)
             elif gen_type == "removalnet":
-                target_model = target_model.removalnet(dataset_id=params[0], alpha=params[1], T=params[2], ydist=params[3], seed=seed, **kwargs)
+                target_model = target_model.removalnet(dataset_id=params[0], rate=round(float(params[1]), 1), alpha=params[2], beta=params[3], T=params[4], ydist=params[5], seed=seed, **kwargs)
             else:
                 raise NotImplementedError(f"-> [ERROR] method:{gen_type} not found!")
         self.logger.info(f"-> load model: {target_model}")
         return target_model
 
-    def list_models(self, cfg, fc=True, methods=["negative", "finetune", "distill", "steal", "prune"]):
+    def list_models(self, cfg, fc=True, seeds=None, methods=["negative", "finetune", "distill", "steal", "prune"]):
         """
         list the models in the benchmark dataset
         :return: a stream of ModelWrapper instances
@@ -552,13 +585,7 @@ class ImageBenchmark:
         prune_ratios = [0.2, 0.5, 0.8]
         finetune_ratios = [0.2, 0.5, 0.8]
         distill_ratios = [1.0]
-        #seeds = [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
-        seeds = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
-        seeds1 = [100, 200, 300, 400, 500]
-        seeds2 = [600, 700, 800, 900, 1000]
-        seeds3 = [1100, 1200, 1300, 1400, 1500]
-        seeds4 = [1600, 1700, 1800, 1900, 2000]
-        #seeds = seeds4
+        seeds = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000] if seeds is None else seeds
 
         # train source models
         source_models = []
@@ -574,6 +601,12 @@ class ImageBenchmark:
                 for seed in seeds:
                     negative_model = source_model.negative(arch_id=arch_id, iters=cfg.NEGATIVE_ITERS, seed=seed)
                     yield negative_model
+
+        if "retraining" in methods:
+            for retrain_model in source_models:
+                for ratio in finetune_ratios:
+                    for seed in seeds:
+                        yield retrain_model.retraining(dataset_id=dataset_id, iters=cfg.FINETUNING_ITERS, tune_ratio=ratio, seed=seed)
 
         if "finetune" in methods:
             for retrain_model in source_models:
@@ -611,14 +644,10 @@ class ImageBenchmark:
 
 def get_args():
     parser = argparse.ArgumentParser(description="Build basic RemovalNet.")
-    parser.add_argument("-datasets_dir", required=False, action="store", dest="datasets_dir", default=osp.join(ROOT, "dataset/data"),
+    parser.add_argument("-datasets_dir", required=False, action="store", dest="datasets_dir", default=osp.join(helper.ROOT, "dataset/data"),
                         help="Path to the dir of datasets.")
-    parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(ROOT, "model/ckpt"),
+    parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(helper.ROOT, "model/ckpt"),
                         help="Path to the dir of benchmark models.")
-    parser.add_argument("-mask", action="store", dest="mask", default="",
-                        help="The mask to filter the models to generate, split with +")
-    parser.add_argument("-phase", action="store", dest="phase", type=str, default="",
-                        help="The phase to run. Use a prefix to filter the phases.")
     parser.add_argument("-regenerate", action="store_true", dest="regenerate", default=False,
                         help="Whether to regenerate the models.")
     parser.add_argument("-model1", action="store", dest="model1", default="pretrain(resnet18,ImageNet)-",
@@ -630,15 +659,21 @@ def get_args():
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
-    args.ROOT = ROOT
-    args.namespace = curr_time
-    args.out_root = osp.join(args.ROOT, "output")
-    args.logs_root = osp.join(args.ROOT, "logs")
-    args.modeldiff_root = osp.join(args.out_root, "modeldiff")
+    args.ROOT = helper.ROOT
+    args.namespace = helper.curr_time
+    args.out_root = osp.join(helper.ROOT, "output")
+    args.logs_root = osp.join(helper.ROOT, "logs")
     args.archs = {
-        "CIFAR10": ["mobilenet_v2"], #"resnet50", "resnet34", "vgg16_bn"],
-        "ImageNet": ["resnet50"]#["mobilenet_v2", "resnet50", "vgg16_bn", "densenet121"],
+        "CINIC10": ["vgg19_bn"],
+        "CIFAR10": ["resnet50"],
+        "ImageNet": ["mobilenet_v2"] #["resnet50", "mobilenet_v2", "vgg16_bn", "vgg19_bn", "densenet121"]
     }
+    for attr_idx in range(40):
+        args.archs[f"CelebA+{attr_idx}"] = ["resnet50", "mobilenet_v2", "vgg16_bn", "vgg19_bn", "densenet121"]
+        """
+        done: resnet50 mobilenet_v2 densenet121
+        """
+
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
     helper.set_default_seed(seed=args.seed)
     for path in [args.datasets_dir, args.models_dir, args.out_root, args.logs_root]:
@@ -650,19 +685,24 @@ def get_args():
 def gen_model():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s")
     logger = logging.getLogger("Benchmark")
-
     args = get_args()
     print(f"-> Running with config:{args}")
 
     dataset = args.dataset
     cfg = dloader.load_cfg(dataset_id=dataset, arch_id="")
+    benchmk = ImageBenchmark(
+        archs=args.archs[dataset], datasets=[dataset],
+        datasets_dir=args.datasets_dir, models_dir=args.models_dir
+    )
 
-    bench = ImageBenchmark(
-        archs=args.archs[dataset],
-        datasets=[dataset],
-        datasets_dir=args.datasets_dir,
-        models_dir=args.models_dir)
-    models = bench.list_models(cfg=cfg, methods=["prune", "finetune", "quantize"]) #"prune", "finetune", "quantize", "steal", "distill", "negative"])
+    seeds = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+    seeds += [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
+    seeds1 = [100, 200, 300, 400, 500]
+    seeds2 = [600, 700, 800, 900, 1000]
+    seeds3 = [1100, 1200, 1300, 1400, 1500]
+    seeds4 = [1600, 1700, 1800, 1900, 2000]
+    # seeds = seeds2
+    models = benchmk.list_models(cfg=cfg, methods=["distill"], seeds=seeds)
     for idx, model in enumerate(models):
         logger.info(f"-> idx:{idx} runing for model:{model} seed:{model.seed}")
         model.gen_model(seed=model.seed)

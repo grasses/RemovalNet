@@ -73,7 +73,13 @@ def view_learning_state(data, file_path, fontsize=30):
         plt.grid()
         x = np.array(data["t"], dtype=np.int32)
         y = np.array(data[key])
-        plt.plot(x, y, label=f"model_t", linewidth=6, marker="*", markersize=10, linestyle="solid")
+
+        plt.plot(x, y, label=f"Surrogate Model", linewidth=5, marker="*", markersize=10, linestyle="solid")
+        plt.plot(x, np.repeat(np.min(y), len(x)), color="black", linewidth=3, linestyle="dashdot")
+        plt.text(float(np.argmin(y)), np.min(y) - 0.5, round(float(np.min(y)), 2), fontsize=fontsize-15)
+        plt.plot(x, np.repeat(np.max(y), len(x)), color="black", linewidth=3, linestyle="dashdot")
+        plt.text(float(np.argmax(y)), np.max(y) + 0.5, round(float(np.max(y)), 2), fontsize=fontsize-15)
+
         plt.xlabel("Iteration", fontsize=fontsize)
         plt.ylabel(key.upper(), fontsize=fontsize)
         if key == "acc":
@@ -103,7 +109,7 @@ def view_layer_activation(model_T, model_t, x, y, ori_x, target_layer, fig_path,
     fused_camt = CAM1.fuse_cams(cams).detach().cpu()
     CAM1.remove_hooks()
 
-    fig = plt.figure(figsize=(16, size * 4), dpi=200)
+    fig = plt.figure(figsize=(16, 5 + size * 3.5), dpi=200)
     img_idx = 0
     for idx in range(size):
         # original image
@@ -129,7 +135,7 @@ def view_layer_activation(model_T, model_t, x, y, ori_x, target_layer, fig_path,
     plt.savefig(pth)
     print(f"-> Saving OverLay:{pth}")
 
-    fig = plt.figure(constrained_layout=True, figsize=(10, 5 + size * 4.5), dpi=200)
+    fig = plt.figure(constrained_layout=True, figsize=(10, 5 + size * 3.5), dpi=200)
     # Left collum
     subfigs = fig.subfigures(1, 2, wspace=0.1, hspace=0.1)
     axsLeft = subfigs[0].subplots(size, 1)

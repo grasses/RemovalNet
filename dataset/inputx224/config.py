@@ -45,14 +45,15 @@ def load_cfg(dataset_id):
     if "ImageNet" in dataset_id:
         args.lr = 1e-2
         args.test_interval = 2000
-        args.TRAIN_ITERS = 50000
-        args.NEGATIVE_ITERS = 50000
-        args.STEAL_ITERS = 50000
-        args.DISTILL_ITERS = 30000
+        args.TRAIN_ITERS = 20000
+        args.NEGATIVE_ITERS = 20000
+        args.STEAL_ITERS = 20000
+        args.DISTILL_ITERS = 10000
         args.QUANTIZE_ITERS = 500
         args.PRUNE_ITERS = 500
         args.FINETUNING_ITERS = 500
         args.CONTINUE_TRAIN = False
+
     elif "CelebA" in dataset_id:
         args.lr = 5e-3
         args.test_interval = 2000

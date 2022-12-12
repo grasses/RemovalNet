@@ -71,6 +71,7 @@ class CelebA(VisionDataset):
         shots: int = -1,
         preload: bool = False
     ) -> None:
+        root = root+"2"
         super().__init__(root, transform=transform, target_transform=target_transform)
         self.split = split
         if isinstance(target_type, list):

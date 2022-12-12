@@ -278,9 +278,24 @@ def vgg19_bn(pretrained=False, progress=True, device="cpu", **kwargs):
     return _vgg("vgg19_bn", "E", True, pretrained, progress, device, **kwargs)
 
 
-if __name__ == "__main__":
-    model = vgg16_bn()
+def convert_from_pytorch_to_removalnet(state_dict_a, state_dict_b):
+    """
+    This script only to convert pytorch vgg model to removalnet.
+    Removalnet uses the layer output, pytorch model only has lost of Conv output.
+    Args:
+        state_dict_a:
+        state_dict_b:
 
+    Returns:
+
+    """
+    for k1, k2 in zip(state_dict_a.keys(), state_dict_b.keys()):
+        state_dict_a[k1] = state_dict_b[k2].clone().detach().cpu()
+    return state_dict_a
+
+
+if __name__ == "__main__":
+    model = vgg19_bn()
     from torchsummary import summary
     summary(model, input_size=(3, 224, 224))
     x = torch.randn(1, 3, 224, 224)

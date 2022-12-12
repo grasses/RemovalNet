@@ -15,7 +15,9 @@ from torch import nn
 from utils import helper
 import random
 from utils import metric
+import numpy as np
 best_acc = 0.0
+
 
 class Trainer:
     def __init__(
@@ -26,6 +28,7 @@ class Trainer:
             train_loader,
             test_loader
     ):
+        helper.set_default_seed(args.seed)
         self.args = args
         self.device = args.device
         self.model = model.to(self.device)
@@ -33,7 +36,6 @@ class Trainer:
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.reg_layers = {}
-        helper.set_default_seed(args.seed)
         self.epoch = args.iterations
         if args.reinit:
             for m in model.modules():
@@ -121,8 +123,11 @@ class Trainer:
         else:
             model = model.to(args.device)
 
+        # simulate: add noise to iterations
+        iterations = int(self.args.iterations * (0.6 + np.random.randint(1, 40) / 100.0))
+
         start_step = 0
-        split_step = [math.ceil(self.args.iterations * 0.3), math.ceil(self.args.iterations * 0.6), self.args.iterations]
+        split_step = [math.ceil(iterations * 0.3), math.ceil(iterations * 0.6), iterations]
         print("-> split_step", split_step)
 
         print(f"-> Task: {args.task_str}")

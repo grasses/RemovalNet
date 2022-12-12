@@ -8,6 +8,7 @@ __copyright__ = 'Copyright © 2022/09/22, homeway'
 
 import torch
 import argparse
+import numpy as np
 
 
 def load_cfg(dataset_id):
@@ -42,13 +43,28 @@ def load_cfg(dataset_id):
     args.resize_size = 32
     args.batch_size = 200
 
-    args.TRAIN_ITERS = 50000
-    args.STEAL_ITERS = 20000
-    args.NEGATIVE_ITERS = 10000
-    args.DISTILL_ITERS = 10000
-    args.QUANTIZE_ITERS = 1000
-    args.PRUNE_ITERS = 1000
-    args.FINETUNING_ITERS = 1000
+    if dataset_id == "CIFAR10":
+        args.TRAIN_ITERS = 50000
+        args.STEAL_ITERS = 20000
+        args.NEGATIVE_ITERS = 10000
+        args.DISTILL_ITERS = 10000
+        args.PRUNE_ITERS = 1000
+        args.QUANTIZE_ITERS = 1000
+        args.FINETUNING_ITERS = 1000
+    elif dataset_id == "CINIC10":
+        args.TRAIN_ITERS = 50000
+        args.STEAL_ITERS = 20000
+        args.NEGATIVE_ITERS = 10000
+        args.DISTILL_ITERS = 10000
+        args.QUANTIZE_ITERS = 1000
+        args.PRUNE_ITERS = 1000
+        args.FINETUNING_ITERS = 1000
     args.CONTINUE_TRAIN = False
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else torch.device("cpu")
     return args
+
+
+
+
+
+
