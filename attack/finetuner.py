@@ -66,10 +66,7 @@ class Finetuner(object):
             model.layer3.register_forward_hook(record_act)
             model.layer4.register_forward_hook(record_act)
         elif ('vgg' in args.network) or ('alexnet' in args.network):
-            reg_layers = {0: [model.layer3, teacher.layer3], 1: [model.layer4, teacher.layer4],
-                          2: [model.layer5, teacher.layer5]}
-            model.layer3.register_forward_hook(record_act)
-            model.layer4.register_forward_hook(record_act)
+            reg_layers = {2: [model.layer5, teacher.layer5]}
             model.layer5.register_forward_hook(record_act)
         elif 'densenet' in args.network:
             reg_layers = {0: [model.features.denseblock2, teacher.features.denseblock2],
@@ -115,8 +112,6 @@ class Finetuner(object):
             teacher.layer3.register_forward_hook(record_act)
             teacher.layer4.register_forward_hook(record_act)
         elif ('vgg' in args.network) or ('alexnet' in args.network):
-            teacher.layer3.register_forward_hook(record_act)
-            teacher.layer4.register_forward_hook(record_act)
             teacher.layer5.register_forward_hook(record_act)
         elif 'densenet' in args.network:
             teacher.features.denseblock2.register_forward_hook(record_act)

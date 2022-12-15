@@ -194,8 +194,7 @@ class DeepJudge(Fingerprinting):
             outputs2 = torch.mean(outputs2.view(outputs1.shape[0], -1, outputs2.shape[-1]), dim=1).numpy()
             assert outputs1.shape == outputs2.shape
             lods.append(np.linalg.norm(outputs1 - outputs2, axis=1, ord=order))
-        del outputs1, outputs2
-        torch.cuda.empty_cache()
+        del samples, outputs1, outputs2
         dist = round(np.average(np.array(lods)), self.DIGISTS)
         self.logger.info(f"-> mertic_LOD() dist={dist}")
         return dist
@@ -229,8 +228,7 @@ class DeepJudge(Fingerprinting):
             activations1 = np.array([np.where(i > theta, 1, 0) for i in outputs1_normlized])
             activations2 = np.array([np.where(i > theta, 1, 0) for i in outputs2_normlized])
             lads.append(np.linalg.norm(activations1 - activations2, axis=1, ord=1))
-        del outputs1, outputs2
-        torch.cuda.empty_cache()
+        del samples, outputs1, outputs2
         dist = round(np.average(np.array(lads)), self.DIGISTS)
         self.logger.info(f"-> mertic_LAD() dist={dist}")
         return dist
@@ -254,8 +252,7 @@ class DeepJudge(Fingerprinting):
             outputs1 = torch.mean(torch.reshape(outputs1, (outputs1.shape[0], -1, outputs1.shape[-1])), dim=1).numpy()
             outputs2 = torch.mean(torch.reshape(outputs2, (outputs1.shape[0], -1, outputs2.shape[-1])), dim=1).numpy()
             nods.append(np.abs(outputs1[:, idx] - outputs2[:, idx]))
-        del outputs1, outputs2
-        torch.cuda.empty_cache()
+        del samples, outputs1, outputs2
         dist = round(np.average(np.array(nods)), self.DIGISTS)
         self.logger.info(f"-> mertic_NOD() dist={dist}")
         return dist
@@ -287,8 +284,7 @@ class DeepJudge(Fingerprinting):
             activations1 = np.array([np.where(i > theta, 1, 0) for i in outputs1_normlized])
             activations2 = np.array([np.where(i > theta, 1, 0) for i in outputs2_normlized])
             nads.append(np.abs(activations1[:, idx] - activations2[:, idx]))
-        del outputs1, outputs2
-        torch.cuda.empty_cache()
+        del samples, outputs1, outputs2
         dist = round(np.average(np.array(nads)) * len(tests), self.DIGISTS)
         self.logger.info(f"-> mertic_NAD() dist={dist}")
         return dist

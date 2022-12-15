@@ -37,7 +37,8 @@ def get_args():
     parser.add_argument("-dataset", required=True, type=str, default="CIFAR10", help="model archtecture")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
-    parser.add_argument("-gap", default=50, type=int, help="Gap between two pretrained model")
+    parser.add_argument("-start", default=520, type=int, help="Gap between two pretrained model")
+    parser.add_argument("-gap", default=20, type=int, help="Gap between two pretrained model")
     args, unknown = parser.parse_known_args()
     args.ROOT = helper.ROOT
     args.namespace = helper.curr_time
@@ -113,7 +114,7 @@ def exp21_eval(args):
 
     print("-> path", path)
     if not osp.exists(path):
-        phar = tqdm(np.arange(args.gap, 1000+args.gap, args.gap))
+        phar = tqdm(np.arange(args.start, 1000+args.gap, args.gap))
         for t in phar:
             # load intermediate model
             fname = f"final_ckpt_s{args.seed}_t{t}.pth"

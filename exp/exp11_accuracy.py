@@ -1,90 +1,61 @@
-#!/usr/bin/env python
-# -*- coding:utf-8 -*-
-
-__author__ = 'homeway'
-__copyright__ = 'Copyright © 2022/10/08, homeway'
-
-
-"""
-This script is used to evaluate accuracy of pretrained model
-"""
-
-
-from torchsummary import summary
-import os, argparse
 import os.path as osp
 import torch
-from utils import helper, metric
+import numpy as np
+import argparse
 from benchmark import ImageBenchmark
-from model import loader as mloader
+from utils import metric, ops, helper
 from dataset import loader as dloader
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Build basic RemovalNet.")
+    parser = argparse.ArgumentParser(description="Build micro benchmark.")
     parser.add_argument("-datasets_dir", action="store", dest="datasets_dir", default=osp.join(helper.ROOT, "dataset/data"),
                         help="Path to the dir of datasets.")
     parser.add_argument("-models_dir", action="store", dest="models_dir", default=osp.join(helper.ROOT, "model/ckpt"),
                         help="Path to the dir of benchmark models.")
-    parser.add_argument("-tag", required=False, type=str, help="tag of script.")
-    parser.add_argument("-dataset", required=False, type=str, default="CIFAR10", help="dataset")
-    parser.add_argument("-device", required=False, type=int, default=1, help="GPU device id")
-    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-model", type=str, required=True, help="model")
+    parser.add_argument("-batch_size", default=100, type=int, help="GPU device id")
+    parser.add_argument("-start", type=int, required=True, help="model iteration")
+    parser.add_argument("-gap", default=20, type=int, help="model iteration")
+    parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     args, unknown = parser.parse_known_args()
-    args.ROOT = helper.ROOT
-    args.namespace = helper.curr_time
-    args.out_root = osp.join(args.ROOT, "output")
-    args.logs_root = osp.join(args.ROOT, "logs")
-    args.archs = {
-        "CIFAR10": ["resnet34", "vgg16_bn"],
-        "ImageNet": ["vgg16_bn"],
-    }
-    args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
-    helper.set_default_seed(seed=args.seed)
-    for path in [args.datasets_dir, args.models_dir, args.out_root, args.logs_root]:
-        if not osp.exists(path):
-            os.makedirs(path)
     return args
 
 
-def main():
-    args = get_args()
-    bench = ImageBenchmark(
-        archs=args.archs[args.dataset],
-        datasets=[args.dataset],
-        datasets_dir=args.datasets_dir,
-        models_dir=args.models_dir)
-    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test")
+args = get_args()
+ops.set_default_seed(args.seed)
 
-    cfg = dloader.load_cfg(dataset_id=args.dataset)
-    for arch in args.archs[args.dataset]:
-        model = bench.load_wrapper(name=f"train({arch},{args.dataset})-")
-        torch_model = model.load_torch_model(seed=1000)
-        _, _, _ = metric.topk_test(torch_model, test_loader=test_loader, device=args.device, epoch=0, debug=True)
-        summary(torch_model, (3, cfg.input_size, cfg.input_size))
-        print()
+
+def main():
+    arch, dataset = args.model.split("(")[1].split(")")[0].split(",")
+    print(args.model, arch, dataset, args.seed)
+
+    test_loader = dloader.get_dataloader(dataset_id=dataset, split="test", shuffle=False, batch_size=args.batch_size)
+    benchmk = ImageBenchmark(datasets_dir=args.datasets_dir, models_dir=args.models_dir, archs=[arch], datasets=dataset)
+    surrogate_model = benchmk.load_wrapper(args.model, seed=args.seed).load_torch_model()
+
+    # eval accuracy of target model
+    target_model = args.model.split("-")[0] + "-"
+    target_model = benchmk.load_wrapper(target_model, seed=args.seed).load_torch_model()
+    _, target_acc, _ = metric.topk_test(target_model, test_loader, device=args.device, epoch=0, debug=True)
+    target_acc = target_acc["top1"]
+
+    # eval accuracy of surrogate model
+    surr_acc = []
+    for t in np.arange(args.start, 1000, args.gap):
+        ckpt = osp.join(args.models_dir, surrogate_model.task, f'final_ckpt_s{args.seed}_t{t}.pth')
+        surrogate_model.load_state_dict(torch.load(ckpt, map_location="cpu")["state_dict"])
+        surrogate_model.to(args.device)
+        _, surrogate_acc, _ = metric.topk_test(surrogate_model, test_loader, device=args.device, epoch=t, debug=True)
+        surr_acc.append(surrogate_acc["top1"])
+    surr_acc = np.array(surr_acc, dtype=np.float32)
+    surr_acc_min = float(np.min(surr_acc))
+    surr_acc_max = float(np.max(surr_acc))
+    med = (surr_acc_max - surr_acc_min) / 2.0 + surr_acc_min
+    print(f"-> accuarcy:{round(med, 2)}±{round(surr_acc_max - surr_acc_min, 2)} min:{round(surr_acc_min, 2)} max:{round(surr_acc_max, 2)}"
+        f" drop:{round(target_acc - surr_acc_max, 2)}~{round(target_acc - surr_acc_min, 2)} drop_mean:{round(target_acc-np.mean(surr_acc), 2)}")
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

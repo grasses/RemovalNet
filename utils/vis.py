@@ -17,10 +17,20 @@ from torchcam.methods import LayerCAM
 from torchcam.utils import overlay_mask
 from torchvision.transforms.functional import normalize, resize, to_pil_image
 sys_args = helper.get_args()
+colors = list(plt.rcParams['axes.prop_cycle'].by_key()['color'])
+
+#["blue", "red", "black", "violet", "orange"]
+markers = ["o", "v", "s", "X", "D", "+", "k"]
+fontdict = {'family': 'serif',
+        'color':  'black',
+        'weight': 'bold',
+        'size': 30,
+}
+
 
 
 def plot_embedding(xy, file_path, lims=100, fontsize=30):
-    plt.figure(figsize=(16, 16), dpi=100)
+    plt.figure(figsize=(12, 12), dpi=160)
     plt.cla()
     plt.grid()
     size = int(len(xy) / 2)
@@ -28,6 +38,23 @@ def plot_embedding(xy, file_path, lims=100, fontsize=30):
     for idx in range(2):
         off = int(idx * size)
         plt.scatter(xy[off:off + size, 0], xy[off:off + size, 1], lw=4, s=60, label=labels[idx])
+
+    plt.xlim(-lims, lims)
+    plt.ylim(-lims, lims)
+    plt.xticks(fontsize=fontsize)
+    plt.yticks(fontsize=fontsize)
+    plt.legend(loc="upper right", numpoints=1, fontsize=fontsize)
+    plt.savefig(file_path)
+    print(f"-> saving fig: {file_path}")
+
+
+def scatter_points(data_dict, file_path, lims=100, fontsize=30):
+    plt.figure(figsize=(16, 16), dpi=100)
+    plt.cla()
+    plt.grid()
+
+    for idx, (key, value) in enumerate(data_dict.items()):
+        plt.scatter(value[:, 0], value[:, 1], lw=4, s=60, label=key, marker=markers[idx])
 
     plt.xlim(-lims, lims)
     plt.ylim(-lims, lims)
@@ -47,21 +74,26 @@ def pixel_plot(data, ax, fontsize=18, hide_labels=False):
     return pc
 
 
-def plot_accuracy_dist_curve(data, metrics, path, fontsize=30):
-    plt.figure(figsize=(16, 16), dpi=100)
+def plot_accuracy_dist_curve(atk_data, neg_data, legends, path, fontsize=25):
+    plt.figure(figsize=(12, 12), dpi=160)
     plt.cla()
     plt.grid()
 
-    for metric in metrics:
-        print("-> metric", metric)
-        point = data[metric]
-        plt.plot(point[:, 0], point[:, 1], linewidth=5, linestyle='-', markersize=15, marker=matplotlib.markers.CARETDOWNBASE)
-    plt.legend(labels=list(metrics), loc='best', fontsize=fontsize)
-    plt.xlim((0.4, 0.95))
+    size = len(legends)
+    for idx, (metric, data) in enumerate(atk_data.items()):
+        plt.plot(data[:, 0], data[:, 1], linewidth=3, linestyle='-', markersize=15, marker=markers[idx], c=colors[idx])
+
+    for idx, (metric, data) in enumerate(neg_data.items()):
+        legends += [f"{legends[idx]}(negative)"]
+        plt.scatter(data[:, 0], data[:, 1], s=200, c=colors[idx + size], marker=markers[idx + size])
+
+    plt.legend(labels=legends, loc='best', fontsize=fontsize)
+    plt.xlim((0, 101))
+    plt.ylim((0, 1.01))
     plt.xticks(fontsize=fontsize)
     plt.yticks(fontsize=fontsize)
-    plt.xlabel("Accuracy(%)", fontsize=fontsize)
-    plt.ylabel("Dist", fontsize=fontsize)
+    plt.xlabel("Accuracy (%)", fontsize=fontsize)
+    plt.ylabel("Distance (Normalized)", fontsize=fontsize)
     plt.savefig(path)
     print(f"-> saving fig: {path}")
 
@@ -76,9 +108,9 @@ def view_learning_state(data, file_path, fontsize=30):
 
         plt.plot(x, y, label=f"Surrogate Model", linewidth=5, marker="*", markersize=10, linestyle="solid")
         plt.plot(x, np.repeat(np.min(y), len(x)), color="black", linewidth=3, linestyle="dashdot")
-        plt.text(float(np.argmin(y)), np.min(y) - 0.5, round(float(np.min(y)), 2), fontsize=fontsize-15)
+        plt.text(float(np.argmin(y) * 20.0), np.min(y) - 3, round(float(np.min(y)), 2), fontsize=fontsize-5)
         plt.plot(x, np.repeat(np.max(y), len(x)), color="black", linewidth=3, linestyle="dashdot")
-        plt.text(float(np.argmax(y)), np.max(y) + 0.5, round(float(np.max(y)), 2), fontsize=fontsize-15)
+        plt.text(float(np.argmax(y) * 20.0), np.max(y) + 3, round(float(np.max(y)), 2), fontsize=fontsize-5)
 
         plt.xlabel("Iteration", fontsize=fontsize)
         plt.ylabel(key.upper(), fontsize=fontsize)
@@ -86,7 +118,7 @@ def view_learning_state(data, file_path, fontsize=30):
             plt.ylim(0, 100.0)
         plt.xticks(fontsize=fontsize)
         plt.yticks(fontsize=fontsize)
-        plt.legend(loc="lower left", numpoints=1, fontsize=fontsize)
+        plt.legend(loc="best", numpoints=1, fontsize=fontsize)
         fpath = file_path + f"_{key.upper()}.pdf"
         plt.savefig(fpath)
         print(f"-> saving fig: {fpath}")
@@ -109,21 +141,21 @@ def view_layer_activation(model_T, model_t, x, y, ori_x, target_layer, fig_path,
     fused_camt = CAM1.fuse_cams(cams).detach().cpu()
     CAM1.remove_hooks()
 
-    fig = plt.figure(figsize=(16, 5 + size * 3.5), dpi=200)
+    fig = plt.figure(figsize=(14, 4 + size * 2), dpi=200)
     img_idx = 0
     for idx in range(size):
         # original image
         img_idx += 1
         fig.add_subplot(size, 3, img_idx)
         pil_image = to_pil_image(ori_x[idx])
-        plt.imshow(pil_image)
+        plt.imshow(pil_image, interpolation='nearest')
 
         # overlay of target model output
         img_idx += 1
         fig.add_subplot(size, 3, img_idx)
         pil_map_T = to_pil_image(fused_cam0[idx].squeeze(0), mode='F')
         pil_overlay_T = overlay_mask(pil_image, pil_map_T, alpha=0.5)
-        plt.imshow(pil_overlay_T)
+        plt.imshow(pil_overlay_T, interpolation='nearest')
 
         # overlay of surrogate model output
         img_idx += 1
@@ -135,7 +167,7 @@ def view_layer_activation(model_T, model_t, x, y, ori_x, target_layer, fig_path,
     plt.savefig(pth)
     print(f"-> Saving OverLay:{pth}")
 
-    fig = plt.figure(constrained_layout=True, figsize=(10, 5 + size * 3.5), dpi=200)
+    fig = plt.figure(constrained_layout=True, figsize=(10, 4 + size * 3), dpi=200)
     # Left collum
     subfigs = fig.subfigures(1, 2, wspace=0.1, hspace=0.1)
     axsLeft = subfigs[0].subplots(size, 1)
@@ -196,7 +228,12 @@ def view_decision_boundary(model1, model2, test_loader, fig_path, step, device=s
 
     logist_array = torch.cat(logist1 + logist2).numpy()
     xy = TSNE(n_components=2, n_iter=1000, random_state=12345).fit_transform(logist_array)
-    plot_embedding(xy, file_path=f"{fig_path}_t{step}.pdf", lims=150)
+    data = {
+        "model_T": xy[:int(len(xy) / 2)],
+        "model_S": xy[int(len(xy) / 2):],
+    }
+    scatter_points(data, file_path=f"{fig_path}_t{step}.pdf", lims=100)
+
 
     select_logist_array = torch.cat(select_logist1 + select_logist2).detach().cpu().numpy()
     xy = TSNE(n_components=2, n_iter=1000, random_state=12345).fit_transform(select_logist_array)

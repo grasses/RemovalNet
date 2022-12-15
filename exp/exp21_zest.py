@@ -148,14 +148,14 @@ def exp21_eval(args):
 
     for k, v in results["dist"].items():
         k = rename_metric(k)
-        results["dist"][k] = np.array(v, dtype=np.float)
         results["plot"][k] = []
         for x, y in zip(results["topk"]["top1"], v):
             results["plot"][k].append([x, y])
         results["plot"][k] = np.array(results["plot"][k], dtype=np.float)
-        #item = np.array(results["plot"][k], dtype=np.float)
-        #results["plot"][k] = item[item[:, 1].argsort()]
-    vis.plot_accuracy_dist_curve(results["plot"], metrics=["Cosine"], path=path.replace(".pt", ".pdf"))
+        item = np.array(results["plot"][k], dtype=np.float)
+        #results["plot"][k] = item[item[:, 0].argsort()]
+
+    vis.plot_accuracy_dist_curve(results["plot"], metrics=["L2"], path=path.replace(".pt", ".pdf"))
 
 
 def main():

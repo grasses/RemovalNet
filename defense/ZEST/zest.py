@@ -12,7 +12,8 @@ import torch
 import os.path as osp
 import numpy as np
 from tqdm import tqdm
-from multiprocessing import Process, Queue, Pool
+from itertools import repeat
+from pathos.pools import ProcessPool
 from benchmark import ImageBenchmark
 from defense import Fingerprinting
 from lime.wrappers.scikit_image import SegmentationAlgorithm
@@ -35,6 +36,7 @@ class ZEST(Fingerprinting):
         self.seed_size = test_loader.batch_size
         self.test_loader = test_loader
         self.orders = orders
+        self.num_classes = test_loader.num_classes
         set_default_seed(seed)
 
         self.fp_root = osp.join(self.fingerprint_root, f"{self.model1.task}")
@@ -46,8 +48,8 @@ class ZEST(Fingerprinting):
 
     def extract(self, cache=True, **kwargs):
         if cache and osp.exists(self.fp_path):
+            print(f"-> load fingerprints from: {self.fp_path}")
             fingerprint = torch.load(self.fp_path, map_location="cpu")
-            self.logger.info(f"-> load cache from: {self.fp_path}")
         else:
             self.logger.info(f'-> [compare] step1: generating lime_data')
             ref_data, raw_ref_data = self.compute_seed_samples()
@@ -76,8 +78,17 @@ class ZEST(Fingerprinting):
         return fingerprint
 
     def verify(self, fingerprint, **kwargs):
-        dist = self.compute_parameter_distance(fingerprint["lime_mask1"], fingerprint["lime_mask2"], lime=True)
-        self.logger.info(f"-> Zest dist: {dist}")
+        res = self.compute_parameter_distance(fingerprint["lime_mask1"], fingerprint["lime_mask2"], lime=True)
+        dist = {}
+        for key, value in res.items():
+            if key == "2":
+                key = "L2"
+            elif key == "1":
+                key = "L1"
+            elif key == "inf":
+                key = "Linf"
+            dist[key] = value
+        self.logger.info(f"-> Zest dist: {res}")
         return dist
 
     def compare(self, **kwargs):
@@ -97,16 +108,23 @@ class ZEST(Fingerprinting):
         :param ref_data:
         :return:
         '''
-        temp = []
         if ref_data.shape[1] == 3:
             ref_data = np.moveaxis(ref_data, 1, -1)
-
-        segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4, ratio=0.2, max_dist=200)
-        phar = tqdm(enumerate(ref_data))
-        for idx, image in phar:
+        '''
+        temp = []
+        for idx, image in enumerate(ref_data):
             temp.append(segmentation_fn(image))
-            phar.set_description(f"-> [{idx+1}/{len(ref_data)}] step2: get_lime_segment...")
+            print(f"-> [{idx+1}/{len(ref_data)}] step2: get_lime_segment...")
         lime_segment = np.stack(temp)
+        '''
+
+        # README: 2022/12/09 alter for multi-processing pool
+        print(f"-> step2: get_lime_segment...size:{len(ref_data)}")
+        pool = ProcessPool(nodes=64)
+        segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4, ratio=0.2, max_dist=200)
+        map_resuts = pool.map(segmentation_fn, list(ref_data))
+        lime_segment = np.stack(map_resuts)
+        del pool
         return lime_segment
 
     def get_lime_dataset(self, ref_data, lime_segment, mean=np.array([0, 0, 0]), num_samples=500):
@@ -116,6 +134,8 @@ class ZEST(Fingerprinting):
         fudged_image += mean.reshape([1, 1, -1])
         ref_dataset = []
         lime_dataset = []
+
+        '''
         phar = tqdm(range(ref_data.shape[0]))
         for i in phar:
             n_features = np.unique(lime_segment[i]).shape[0]
@@ -124,6 +144,38 @@ class ZEST(Fingerprinting):
             ref_dataset.append(self.get_reference_dataset(lime_data, ref_data[i], lime_segment[i], fudged_image))
             lime_dataset.append(lime_data)
             phar.set_description(f"-> [{i}/{ref_data.shape[0]}] step3: get_lime_dataset...")
+        '''
+        # README: 2022/12/09 alter for multi-processing pool
+        def reference_dataset(idx, size, _ref_data, _lime_segment, fudged_image):
+            n_features = np.unique(_lime_segment).shape[0]
+            sub_lime_data = np.random.randint(0, 2, [num_samples, n_features])
+            sub_lime_data[0, :] = 1
+            sub_dataset = []
+            for sample in sub_lime_data:
+                temp = copy.deepcopy(_ref_data)
+                zeros = np.where(sample == 0)[0]
+                mask = np.zeros(_lime_segment.shape).astype(bool)
+                for z in zeros:
+                    mask[_lime_segment == z] = True
+                temp[mask] = fudged_image[mask]
+                sub_dataset.append(temp)
+            if (idx + 1) % 32 == 0:
+                print(f"-> step3: get_lime_dataset...[{idx+1}/{size}]")
+            return [np.stack(sub_dataset), sub_lime_data]
+
+        size = len(ref_data)
+        pool = ProcessPool(nodes=64)
+        pool_result = pool.map(reference_dataset,
+                range(size),
+                list(repeat(size, size)),
+                [ref_data[i] for i in range(size)],
+                [lime_segment[i] for i in range(size)],
+                list(repeat(fudged_image, size))
+        )
+        for idx, (sub_dataset, sub_lime_data) in enumerate(pool_result):
+            ref_dataset.append(sub_dataset)
+            lime_dataset.append(sub_lime_data)
+        del pool
         return ref_dataset, lime_dataset
 
     def get_reference_dataset(self, lime_data, ref_data, segment, fudged_image):

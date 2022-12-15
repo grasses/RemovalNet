@@ -31,6 +31,10 @@ def rename_labels(labels):
         if "finetune" in name:
             ratio = name.split(",")[-1].split(")")[0]
             labels[idx] = f"FT({ratio})"
+        if "removal" in name:
+            labels[idx] = "Removal"
+        if "DDM" in name:
+            labels[idx] = labels[idx].replace("DDM", "DDV")
     return labels
 
 
@@ -52,14 +56,13 @@ def normalize_dict(x, reverse=False):
     return x.tolist()
 
 
-def plot_boxplot(data, xticklabels, fpath=None, fontsize=30):
+def plot_boxplot(data, xticklabels, fpath=None, fontsize=25):
     colors = ['pink', 'lightblue', 'lightgreen', 'bisque', 'lime', 'maroon']
-    figure, ax = plt.subplots(figsize=(18, 12))
+    figure, ax = plt.subplots(figsize=(20, 10), dpi=160)
     ax.yaxis.grid(True)
 
     off = 0
     legends, bplots = [], []
-
     for idx, (lenged, item) in enumerate(data.items()):
         '''
         if "cos" in lenged:
@@ -67,7 +70,7 @@ def plot_boxplot(data, xticklabels, fpath=None, fontsize=30):
         else:
             item = normalize_dict(item)
         '''
-        bplot = ax.boxplot(item, patch_artist=True, positions=np.arange(len(item))+off)
+        bplot = ax.boxplot(item, widths=0.15, showfliers=False, patch_artist=True, positions=np.arange(len(item))+off)
         legends.append(lenged)
         bplots.append(bplot["boxes"][0])
         off += 0.2
@@ -75,9 +78,37 @@ def plot_boxplot(data, xticklabels, fpath=None, fontsize=30):
             patch.set_facecolor(colors[idx])
 
     legends = rename_labels(legends)
-    ax.legend(bplots, legends, loc='upper right', fontsize=fontsize)
+    ax.legend(bplots, legends, loc='best', fontsize=fontsize)
     plt.setp(ax, xticks=np.arange(len(item)), xticklabels=rename_labels(xticklabels))
     plt.xticks(fontsize=fontsize-10)
     plt.yticks(fontsize=fontsize-5)
     print(f"-> save figugre:{fpath}")
     plt.savefig(fpath)
+
+
+
+def boxplot_distance(dists, metrics, xticks, ylabel, fpath, fontsize=28):
+    off_x = 0
+    bplots, legends = [], []
+    colors = ['pink', 'lightblue', 'lightgreen', 'bisque', 'lime', 'maroon']
+
+    figure, ax = plt.subplots(figsize=(20, 10), dpi=160)
+    ax.yaxis.grid(True)
+    for idx, metric in enumerate(metrics):
+        item = dists[idx].tolist()
+        bplot = ax.boxplot(item, widths=0.15, showfliers=False, patch_artist=True, positions=np.arange(len(item)) + off_x)
+        legends.append(metric)
+        bplots.append(bplot["boxes"][0])
+        off_x += 0.2
+        for patch in bplot["boxes"]:
+            patch.set_facecolor(colors[idx])
+    legends = rename_labels(legends)
+    ax.legend(bplots, legends, loc='best', fontsize=fontsize)
+    plt.setp(ax, xticks=np.arange(len(item)), xticklabels=rename_labels(xticks))
+    plt.xticks(fontsize=fontsize - 5)
+    plt.yticks(fontsize=fontsize - 5)
+    plt.ylabel("Model Reuse", fontsize=fontsize - 5)
+    plt.ylabel(ylabel, fontsize=fontsize - 5)
+    print(f"-> save figugre:{fpath}")
+    plt.savefig(fpath)
+

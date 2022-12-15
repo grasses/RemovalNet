@@ -1,22 +1,17 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import sys
 import os
 import argparse
-import time
 import logging
 import pathlib
-import tempfile
-import copy
-import random
+import math
 import torch
 import numpy as np
 from scipy import spatial
 import torch.nn as nn
 import os.path as osp
 from utils import helper
-from attack.ops import lazy_property
 from defense import Fingerprinting
 from utils import ops
 
@@ -42,6 +37,8 @@ class ModelDiff(Fingerprinting):
 
         data, _ = next(iter(test_loader))
         self.input_shape = data.shape
+        self.batch_size = 50 if self.input_shape[-1] == 224 else 200
+
         self.test_size = test_loader.batch_size
         self.model1.to(self.device)
         self.model2.to(self.device)
@@ -334,13 +331,16 @@ class ModelDiff(Fingerprinting):
 
         ddv1 = self.normalize(np.array(ddv1))
         ddv2 = self.normalize(np.array(ddv2))
-        ddv_distance = self.compare_ddv(ddv1, ddv2)
+
+        ddv_distance = spatial.distance.euclidean(ddv1, ddv2)
+        #ddv_distance = self.compare_ddv(ddv1, ddv2)
         model_similarity = 1 - ddv_distance
         return model_similarity
 
     def compute_ddv(self, model, inputs):
         dists = []
-        outputs = model(inputs).detach().to('cpu').numpy()
+        outputs = self.batch_forward(model, inputs, batch_size=self.batch_size).detach().to('cpu').numpy()
+        #outputs = model(inputs).detach().to('cpu').numpy()
         self.logger.debug(f'{model}: \n profiling_outputs={outputs.shape}\n{outputs}\n')
         n_pairs = int(len(list(inputs)) / 2)
         for i in range(n_pairs):
@@ -360,22 +360,43 @@ class ModelDiff(Fingerprinting):
         return model_similarity
 
     def compute_ddm(self, model, inputs):
-        outputs = model(inputs).detach().to('cpu').numpy()
+        outputs = self.batch_forward(model, inputs, batch_size=self.batch_size).detach().to('cpu').numpy()
         # outputs = outputs[:, :10]
         outputs_list = list(outputs)
         ddm = spatial.distance.cdist(outputs_list, outputs_list)
         return ddm
 
     @staticmethod
-    def metrics_output_diversity(model, inputs, use_torch=False):
-        outputs = model(inputs)
-        output_dists = torch.cdist(outputs, outputs, p=2.0).detach().cpu().numpy()
+    def batch_forward(model, x, batch_size=100, argmax=False):
+        """
+        split x into batch_size, torch.cat result to return
+        :param model:
+        :param x:
+        :param batch_size:
+        :param argmax:
+        :return:
+        """
+        device = next(model.parameters()).device
+        steps = math.ceil(len(x) / batch_size)
+        pred = []
+        with torch.no_grad():
+            for step in range(steps):
+                off = int(step * batch_size)
+                batch_x = x[off: off + batch_size].to(device)
+                pred.append(model(batch_x).cpu().detach())
+        pred = torch.cat(pred)
+        return pred.argmax(dim=1) if argmax else pred
+
+    def metrics_output_diversity(self, model, inputs, use_torch=False):
+        outputs = self.batch_forward(model, inputs, batch_size=self.batch_size).detach().cpu()
+        #outputs = model(inputs)
+        output_dists = torch.cdist(outputs, outputs, p=2.0).numpy()
         diversity = np.mean(output_dists)
         return diversity
 
-    @staticmethod
-    def metrics_output_variance(model, inputs, use_torch=False):
-        batch_output = model(inputs).to('cpu').numpy()
+    def metrics_output_variance(self, model, inputs, use_torch=False):
+        batch_output = self.batch_forward(model, inputs, batch_size=self.batch_size).detach().cpu().numpy()
+        #batch_output = model(inputs).to('cpu').numpy()
         mean_axis = tuple(list(range(len(batch_output.shape)))[2:])
         batch_output_mean = np.mean(batch_output, axis=mean_axis)
         # print(batch_output_mean.shape)
@@ -445,16 +466,18 @@ class ModelDiff(Fingerprinting):
         model1 = self.model1.to(self.device)
         model2 = self.model2.to(self.device)
         ndims = np.prod(input_shape)
-        initial_outputs1 = model1(seed_inputs).detach().to('cpu')
-        initial_outputs2 = model2(seed_inputs).detach().to('cpu')
+
+        initial_outputs1 = self.batch_forward(model1, seed_inputs, batch_size=self.batch_size).detach().to('cpu')
+        initial_outputs2 = self.batch_forward(model2, seed_inputs, batch_size=self.batch_size).detach().to('cpu')
+        #initial_outputs1 = model1(seed_inputs).detach().to('cpu')
+        #initial_outputs2 = model2(seed_inputs).detach().to('cpu')
 
         def evaluate_inputs(inputs):
             inputs = inputs.to(self.device)
             metrics1 = self.input_metrics(self.model1, inputs)
             metrics2 = self.input_metrics(self.model2, inputs)
-
-            outputs1 = model1(inputs).detach().to('cpu')
-            outputs2 = model2(inputs).detach().to('cpu')
+            outputs1 = self.batch_forward(model1, seed_inputs, batch_size=self.batch_size).detach().to('cpu')
+            outputs2 = self.batch_forward(model2, seed_inputs, batch_size=self.batch_size).detach().to('cpu')
             output_dist1 = torch.mean(torch.diagonal(torch.cdist(outputs1, initial_outputs1, p=2))).numpy()
             output_dist2 = torch.mean(torch.diagonal(torch.cdist(outputs2, initial_outputs2, p=2))).numpy()
             return output_dist1 * output_dist2 * metrics1 * metrics2
