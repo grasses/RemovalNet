@@ -79,11 +79,15 @@ class ModelDiff(Fingerprinting):
         self.logger.info(f'  input metrics: model1={input_metrics_1} model2={input_metrics_2}')
         ddm = self.compute_similarity_with_ddm(fingerprints)
         ddv = self.compute_similarity_with_ddv(fingerprints)
+        ws_abs = self.compute_similarity_with_abs_weight()
+        ws = self.compute_similarity_with_fc()
         mr = self.compute_similarity_with_IPGuard(fingerprints)
         dist = {
             "DDM": ddm,
             "DDV": ddv,
-            "MR": mr
+            "MR": mr,
+            "WS": ws,
+            "WS_abs": ws_abs
         }
         print(f"-> {self.arch1} vs {self.arch2} seed:{self.seed} dist:{dist}")
         return dist
@@ -102,12 +106,31 @@ class ModelDiff(Fingerprinting):
         sim = consist / n_pairs
         return sim
 
+    def compute_similarity_with_fc(self):
+        name_to_modules = {}
+        for name, module in self.model1.named_modules():
+            if isinstance(module, nn.Linear):
+                name_to_modules[name] = [module.weight]
+        for name, module in self.model2.named_modules():
+            if isinstance(module, nn.Linear):
+                name_to_modules[name].append(module.weight)
+        layer_dist = []
+        for name, pack in name_to_modules.items():
+            weight1, weight2 = pack
+            weight1 = weight1.view(-1)
+            weight2 = weight2.view(-1)
+            dist = nn.CosineSimilarity(dim=0)(weight1, weight2)
+            layer_dist.append(dist.item())
+        sim = np.mean(layer_dist)
+        self.logger.info(f'-> weight similarity: {sim}')
+        return sim
+
     def compute_similarity_with_weight(self):
         name_to_modules = {}
-        for name, module in self.model1.torch_model.named_modules():
+        for name, module in self.model1.named_modules():
             if isinstance(module, nn.Conv2d):
                 name_to_modules[name] = [module.weight]
-        for name, module in self.model2.torch_model.named_modules():
+        for name, module in self.model2.named_modules():
             if isinstance(module, nn.Conv2d):
                 name_to_modules[name].append(module.weight)
         layer_dist = []
@@ -116,19 +139,18 @@ class ModelDiff(Fingerprinting):
             # print(name, float((weight1==0).sum() / weight1.numel()))
             weight1 = weight1.view(-1)
             weight2 = weight2.view(-1)
-            dist = nn.CosineSimilarity(dim=0)(weight1, weight2)
+            dist = nn.MSELoss(reduction="mean")(weight1, weight2)
             layer_dist.append(dist.item())
         sim = np.mean(layer_dist)
-
-        self.logger.info(f'  model similarity: {sim}')
+        self.logger.info(f'-> weight similarity: {sim}')
         return sim
 
     def compute_similarity_with_abs_weight(self):
         name_to_modules = {}
-        for name, module in self.model1.torch_model.named_modules():
+        for name, module in self.model1.named_modules():
             if isinstance(module, nn.Conv2d):
                 name_to_modules[name] = [module.weight]
-        for name, module in self.model2.torch_model.named_modules():
+        for name, module in self.model2.named_modules():
             if isinstance(module, nn.Conv2d):
                 name_to_modules[name].append(module.weight)
         layer_dist = []
@@ -137,16 +159,15 @@ class ModelDiff(Fingerprinting):
             dist = 1 - ((weight1 - weight2)).abs().mean()
             layer_dist.append(dist.item())
         sim = np.mean(layer_dist)
-
         self.logger.info(f'  model similarity: {sim}')
         return sim
 
     def compute_similarity_with_bn_weight(self):
         name_to_modules = {}
-        for name, module in self.model1.torch_model.named_modules():
+        for name, module in self.model1.named_modules():
             if isinstance(module, nn.BatchNorm2d):
                 name_to_modules[name] = [module.weight]
-        for name, module in self.model2.torch_model.named_modules():
+        for name, module in self.model2.named_modules():
             if isinstance(module, nn.BatchNorm2d):
                 name_to_modules[name].append(module.weight)
         layer_dist = []
@@ -163,10 +184,10 @@ class ModelDiff(Fingerprinting):
 
     def compute_similarity_with_conv_bn_weight(self):
         name_to_modules = {}
-        for name, module in self.model1.torch_model.named_modules():
+        for name, module in self.model1.named_modules():
             if isinstance(module, nn.BatchNorm2d) or isinstance(module, nn.Conv2d):
                 name_to_modules[name] = [module.weight]
-        for name, module in self.model2.torch_model.named_modules():
+        for name, module in self.model2.named_modules():
             if isinstance(module, nn.BatchNorm2d) or isinstance(module, nn.Conv2d):
                 name_to_modules[name].append(module.weight)
         layer_dist = []
@@ -183,10 +204,10 @@ class ModelDiff(Fingerprinting):
 
     def compute_similarity_with_identical_weight(self):
         name_to_modules = {}
-        for name, module in self.model1.torch_model.named_modules():
+        for name, module in self.model1.named_modules():
             if isinstance(module, nn.Conv2d):
                 name_to_modules[name] = [module.weight]
-        for name, module in self.model2.torch_model.named_modules():
+        for name, module in self.model2.named_modules():
             if isinstance(module, nn.Conv2d):
                 name_to_modules[name].append(module.weight)
         layer_dist = []
@@ -203,10 +224,10 @@ class ModelDiff(Fingerprinting):
 
     def compute_similarity_with_whole_weight(self):
         name_to_modules = {}
-        for name, module in self.model1.torch_model.named_modules():
+        for name, module in self.model1.named_modules():
             if isinstance(module, nn.Conv2d):
                 name_to_modules[name] = [module.weight]
-        for name, module in self.model2.torch_model.named_modules():
+        for name, module in self.model2.named_modules():
             if isinstance(module, nn.Conv2d):
                 name_to_modules[name].append(module.weight)
         model1_weight, model2_weight = [], []

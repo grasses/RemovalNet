@@ -98,7 +98,7 @@ class ZEST(Fingerprinting):
         images, labels = next(iter(self.test_loader))
         mean = self.test_loader.mean
         std = self.test_loader.std
-        raw_images = self.test_loader.unnormalize(images, mean=mean, std=std).to('cpu').numpy() * 255.0
+        raw_images = self.test_loader.unnormalize(images, mean=mean, std=std, clamp=True).to('cpu').numpy() * 255.0
         images = images.to('cpu').numpy()
         return images, raw_images
 
@@ -110,22 +110,24 @@ class ZEST(Fingerprinting):
         '''
         if ref_data.shape[1] == 3:
             ref_data = np.moveaxis(ref_data, 1, -1)
+        segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4, ratio=0.2, max_dist=200)
+
         '''
         temp = []
         for idx, image in enumerate(ref_data):
             temp.append(segmentation_fn(image))
-            print(f"-> [{idx+1}/{len(ref_data)}] step2: get_lime_segment...")
         lime_segment = np.stack(temp)
+        return lime_segment
         '''
-
         # README: 2022/12/09 alter for multi-processing pool
         print(f"-> step2: get_lime_segment...size:{len(ref_data)}")
         pool = ProcessPool(nodes=64)
-        segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4, ratio=0.2, max_dist=200)
         map_resuts = pool.map(segmentation_fn, list(ref_data))
         lime_segment = np.stack(map_resuts)
         del pool
         return lime_segment
+
+
 
     def get_lime_dataset(self, ref_data, lime_segment, mean=np.array([0, 0, 0]), num_samples=500):
         if ref_data.shape[1] == 3:
@@ -134,7 +136,6 @@ class ZEST(Fingerprinting):
         fudged_image += mean.reshape([1, 1, -1])
         ref_dataset = []
         lime_dataset = []
-
         '''
         phar = tqdm(range(ref_data.shape[0]))
         for i in phar:
@@ -144,6 +145,7 @@ class ZEST(Fingerprinting):
             ref_dataset.append(self.get_reference_dataset(lime_data, ref_data[i], lime_segment[i], fudged_image))
             lime_dataset.append(lime_data)
             phar.set_description(f"-> [{i}/{ref_data.shape[0]}] step3: get_lime_dataset...")
+        return ref_dataset, lime_dataset
         '''
         # README: 2022/12/09 alter for multi-processing pool
         def reference_dataset(idx, size, _ref_data, _lime_segment, fudged_image):
@@ -161,8 +163,8 @@ class ZEST(Fingerprinting):
                 sub_dataset.append(temp)
             if (idx + 1) % 32 == 0:
                 print(f"-> step3: get_lime_dataset...[{idx+1}/{size}]")
-            return [np.stack(sub_dataset), sub_lime_data]
-
+            return [idx, np.stack(sub_dataset), sub_lime_data]
+        # run reference_dataset with multi-process
         size = len(ref_data)
         pool = ProcessPool(nodes=64)
         pool_result = pool.map(reference_dataset,
@@ -172,11 +174,16 @@ class ZEST(Fingerprinting):
                 [lime_segment[i] for i in range(size)],
                 list(repeat(fudged_image, size))
         )
-        for idx, (sub_dataset, sub_lime_data) in enumerate(pool_result):
-            ref_dataset.append(sub_dataset)
-            lime_dataset.append(sub_lime_data)
+        # order the output data
+        for idx in range(size):
+            ref_dataset.append(None)
+            lime_dataset.append(None)
+        for idx, (idx, sub_dataset, sub_lime_data) in enumerate(pool_result):
+            ref_dataset[idx] = sub_dataset
+            lime_dataset[idx] = sub_lime_data
         del pool
         return ref_dataset, lime_dataset
+
 
     def get_reference_dataset(self, lime_data, ref_data, segment, fudged_image):
         sub_dataset = []
