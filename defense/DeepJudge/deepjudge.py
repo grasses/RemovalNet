@@ -22,6 +22,7 @@ from defense import Fingerprinting
 from dataset import loader
 from . import ops
 from .generation import BlackboxSeeding, WhiteboxSeeding
+from utils import helper
 format_time = str(datetime.datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d_%H%M%S"))
 ROOT = os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 out_root = osp.join(ROOT, "output")
@@ -29,7 +30,7 @@ out_root = osp.join(ROOT, "output")
 
 class DeepJudge(Fingerprinting):
     def __init__(self, model1, model2, test_loader, device, out_root,
-                 blackbox=False, seed_method="PGD", layer_index=4,
+                 blackbox=False, seed_method="PGD", layer_index=4, alpha=1e-3,
                  test_size=1000, batch_size=200, DIGISTS=4, seed=1000):
         super().__init__(model1, model2, device=device, out_root=out_root)
         assert seed_method in ["FGSM", "PGD", "CW", "Random", "IPGuard"]
@@ -41,6 +42,7 @@ class DeepJudge(Fingerprinting):
         self.batch_size = batch_size
         self.test_size = test_size
         self.seed_method = seed_method
+        helper.set_default_seed(seed)
 
         # init logger
         self.logger = logging.getLogger('DeepJudge')

@@ -45,12 +45,13 @@ def load_cfg(dataset_id):
 
     if dataset_id == "CIFAR10":
         args.TRAIN_ITERS = 50000
-        args.STEAL_ITERS = 20000
-        args.NEGATIVE_ITERS = 10000
+        args.STEAL_ITERS = 3000
+        args.NEGATIVE_ITERS = 12000
         args.DISTILL_ITERS = 10000
         args.PRUNE_ITERS = 1000
         args.QUANTIZE_ITERS = 1000
         args.FINETUNING_ITERS = 1000
+
     elif dataset_id == "CINIC10":
         args.TRAIN_ITERS = 50000
         args.STEAL_ITERS = 20000
@@ -59,6 +60,18 @@ def load_cfg(dataset_id):
         args.QUANTIZE_ITERS = 1000
         args.PRUNE_ITERS = 1000
         args.FINETUNING_ITERS = 1000
+
+    elif "CelebA32" in dataset_id:
+        args.lr = 6e-3
+        args.resize_size = 40
+        args.TRAIN_ITERS = 20000
+        args.STEAL_ITERS = 5000
+        args.NEGATIVE_ITERS = 5000
+        args.DISTILL_ITERS = 5000
+        args.PRUNE_ITERS = 500
+        args.QUANTIZE_ITERS = 500
+        args.FINETUNING_ITERS = 500
+
     args.CONTINUE_TRAIN = False
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else torch.device("cpu")
     return args

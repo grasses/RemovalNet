@@ -51,28 +51,21 @@ class Finetuner(object):
             self.out = output
 
         if 'mobilenet' in args.network:
-            reg_layers = {0: [model.features[10], teacher.features[10]],
-                          1: [model.features[16], teacher.features[16]],
-                          2: [model.features[18], teacher.features[18]]}
-
-            model.features[10].register_forward_hook(record_act)
+            reg_layers = {0: [model.features[16], teacher.features[16]],
+                          1: [model.features[18], teacher.features[18]]}
             model.features[16].register_forward_hook(record_act)
             model.features[18].register_forward_hook(record_act)
         elif 'resnet' in args.network:
-            reg_layers = {0: [model.layer1, teacher.layer1], 1: [model.layer2, teacher.layer2],
-                          2: [model.layer3, teacher.layer3], 3: [model.layer4, teacher.layer4]}
-            model.layer1.register_forward_hook(record_act)
-            model.layer2.register_forward_hook(record_act)
+            reg_layers = {0: [model.layer3, teacher.layer3], 1: [model.layer4, teacher.layer4]}
             model.layer3.register_forward_hook(record_act)
             model.layer4.register_forward_hook(record_act)
         elif ('vgg' in args.network) or ('alexnet' in args.network):
-            reg_layers = {2: [model.layer5, teacher.layer5]}
+            reg_layers = {0: [model.layer4, teacher.layer4], 1: [model.layer5, teacher.layer5]}
+            model.layer4.register_forward_hook(record_act)
             model.layer5.register_forward_hook(record_act)
         elif 'densenet' in args.network:
-            reg_layers = {0: [model.features.denseblock2, teacher.features.denseblock2],
-                          1: [model.features.denseblock3, teacher.features.denseblock3],
-                          2: [model.features.denseblock4, teacher.features.denseblock4]}
-            model.features.denseblock2.register_forward_hook(record_act)
+            reg_layers = {0: [model.features.denseblock3, teacher.features.denseblock3],
+                          1: [model.features.denseblock4, teacher.features.denseblock4]}
             model.features.denseblock3.register_forward_hook(record_act)
             model.features.denseblock4.register_forward_hook(record_act)
         else:
@@ -103,18 +96,15 @@ class Finetuner(object):
                 m.reset_parameters()
 
         if 'mobilenet' in args.network:
-            teacher.features[10].register_forward_hook(record_act)
             teacher.features[16].register_forward_hook(record_act)
             teacher.features[18].register_forward_hook(record_act)
         elif 'resnet' in args.network:
-            teacher.layer1.register_forward_hook(record_act)
-            teacher.layer2.register_forward_hook(record_act)
             teacher.layer3.register_forward_hook(record_act)
             teacher.layer4.register_forward_hook(record_act)
         elif ('vgg' in args.network) or ('alexnet' in args.network):
+            teacher.layer4.register_forward_hook(record_act)
             teacher.layer5.register_forward_hook(record_act)
         elif 'densenet' in args.network:
-            teacher.features.denseblock2.register_forward_hook(record_act)
             teacher.features.denseblock3.register_forward_hook(record_act)
             teacher.features.denseblock4.register_forward_hook(record_act)
         else:

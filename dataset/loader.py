@@ -5,7 +5,6 @@ __author__ = 'homeway'
 __copyright__ = 'Copyright © 2022/06/28, homeway'
 
 
-import argparse
 import os
 import os.path as osp
 import numpy as np
@@ -15,22 +14,22 @@ import logging
 from torchvision import transforms
 from utils import ops
 from . import inputx32, inputx64, inputx224
-from dataset.inputx32 import CIFAR10, CINIC10
+from dataset.inputx32 import CIFAR10, CINIC10, CelebA32
 from dataset.inputx224.lfw import LFW
 from dataset.inputx224.celeba import CelebA
 from dataset.inputx224.imagenet import ImageNet
-
 
 DATA_ROOT = osp.join(osp.abspath(osp.dirname(__file__)), "data")
 logger = logging.getLogger('DataLoader')
 
 task_list = {
-    "CV32": ["CIFAR10", "CIFAR100", "CINIC10"],
+    "CV32": ["CIFAR10", "CINIC10", "CelebA32"],
     "CV224": ["CelebA", "ImageNet", "LFW"],
     "AUDIO": ["SpeechCommands"],
 }
 for i in range(40):
-    task_list["CV224"].append(f"CelebA+{i}")
+    task_list["CV32"].append(f"CelebA32+{i}")
+    task_list["CV224"].append(f"CelebA32+{i}")
 
 
 def load_cfg(dataset_id, arch_id=None):
@@ -43,11 +42,13 @@ def get_num_classess(dataset_id):
         "CIFAR10": 10,
         "CINIC10": 10,
         "CelebA": 2,
+        "CelebA32": 2,
         "LFW": 2,
         "ImageNet": 1000,
     }
     for i in range(40):
         NUM_CLASSES[f"CelebA+{i}"] = 2
+        NUM_CLASSES[f"CelebA32+{i}"] = 2
     return NUM_CLASSES[dataset_id]
 
 
@@ -55,12 +56,14 @@ def get_size(dataset_id):
     INPUT_SIZE = {
         "CIFAR10": 32,
         "CINIC10": 32,
+        "CelebA32": 32,
         "LFW": 224,
         "CelebA": 224,
         "Flower102": 224,
         "ImageNet": 224,
     }
     for i in range(40):
+        INPUT_SIZE[f"CelebA32+{i}"] = 32
         INPUT_SIZE[f"CelebA+{i}"] = 224
     return INPUT_SIZE[dataset_id]
 

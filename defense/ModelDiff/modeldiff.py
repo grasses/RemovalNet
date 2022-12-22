@@ -37,7 +37,7 @@ class ModelDiff(Fingerprinting):
 
         data, _ = next(iter(test_loader))
         self.input_shape = data.shape
-        self.batch_size = 50 if self.input_shape[-1] == 224 else 200
+        self.batch_size = 50 if self.input_shape[-1] == 224 else 400
 
         self.test_size = test_loader.batch_size
         self.model1.to(self.device)

@@ -136,6 +136,7 @@ class ZEST(Fingerprinting):
         fudged_image += mean.reshape([1, 1, -1])
         ref_dataset = []
         lime_dataset = []
+
         '''
         phar = tqdm(range(ref_data.shape[0]))
         for i in phar:
@@ -147,6 +148,7 @@ class ZEST(Fingerprinting):
             phar.set_description(f"-> [{i}/{ref_data.shape[0]}] step3: get_lime_dataset...")
         return ref_dataset, lime_dataset
         '''
+
         # README: 2022/12/09 alter for multi-processing pool
         def reference_dataset(idx, size, _ref_data, _lime_segment, fudged_image):
             n_features = np.unique(_lime_segment).shape[0]
@@ -164,6 +166,7 @@ class ZEST(Fingerprinting):
             if (idx + 1) % 32 == 0:
                 print(f"-> step3: get_lime_dataset...[{idx+1}/{size}]")
             return [idx, np.stack(sub_dataset), sub_lime_data]
+        
         # run reference_dataset with multi-process
         size = len(ref_data)
         pool = ProcessPool(nodes=64)
@@ -183,6 +186,7 @@ class ZEST(Fingerprinting):
             lime_dataset[idx] = sub_lime_data
         del pool
         return ref_dataset, lime_dataset
+
 
 
     def get_reference_dataset(self, lime_data, ref_data, segment, fudged_image):

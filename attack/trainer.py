@@ -124,10 +124,11 @@ class Trainer:
             model = model.to(args.device)
 
         # simulate: add noise to iterations
-        iterations = int(self.args.iterations * (1.1 + np.random.randint(1, 40) / 100.0))
+        iterations = int(self.args.iterations * (0.7 + np.random.randint(10, 30) / 100.0))
 
         start_step = 0
-        split_step = [math.ceil(iterations * 0.3), math.ceil(iterations * 0.6), iterations]
+        alpha = np.random.randint(20, 40) / 100.0
+        split_step = [math.ceil(iterations * alpha), math.ceil(iterations * (1-alpha)), iterations]
         print("-> split_step", split_step)
 
         print(f"-> Task: {args.task_str}")

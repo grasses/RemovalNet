@@ -10,7 +10,6 @@ import torch
 import numpy as np
 import os.path as osp
 from sklearn.manifold import TSNE
-import matplotlib
 import matplotlib.pyplot as plt
 from utils import helper
 from torchcam.methods import LayerCAM
@@ -20,7 +19,7 @@ sys_args = helper.get_args()
 colors = list(plt.rcParams['axes.prop_cycle'].by_key()['color'])
 
 #["blue", "red", "black", "violet", "orange"]
-markers = ["o", "v", "s", "X", "D", "+", "k"]
+markers = ["o", "v", "s", "^", "d", "*", "D", "+", "k", "X"]
 fontdict = {'family': 'serif',
         'color':  'black',
         'weight': 'bold',
@@ -55,7 +54,6 @@ def scatter_points(data_dict, file_path, lims=100, fontsize=30):
 
     for idx, (key, value) in enumerate(data_dict.items()):
         plt.scatter(value[:, 0], value[:, 1], lw=4, s=60, label=key, marker=markers[idx])
-
     plt.xlim(-lims, lims)
     plt.ylim(-lims, lims)
     plt.xticks(fontsize=fontsize)
@@ -74,26 +72,39 @@ def pixel_plot(data, ax, fontsize=18, hide_labels=False):
     return pc
 
 
-def plot_accuracy_dist_curve(atk_data, neg_data, legends, path, fontsize=25):
-    plt.figure(figsize=(12, 12), dpi=160)
+def plot_accuracy_dist_curve(atk_data, neg_data, steps, legends, path, fontsize=25, linewidth=5, markersize=25):
+    plt.figure(figsize=(12, 12), dpi=200)
     plt.cla()
     plt.grid()
-
+    global markers
     size = len(legends)
+    num_steps = len(steps)
+    fontdict["size"] = fontsize
+
+    markers_neg = "P"
+    if "ZEST" in legends[0]:
+        markers = markers[2:]
+        markers_neg = "X"
+
     for idx, (metric, data) in enumerate(atk_data.items()):
-        plt.plot(data[:, 0], data[:, 1], linewidth=3, linestyle='-', markersize=15, marker=markers[idx], c=colors[idx])
+        plt.plot(data[:, 0], data[:, 1], linewidth=linewidth, linestyle='-', markersize=markersize, marker=markers[idx], c=colors[idx])
+        # plot step info
+        #plt.text(data[0, 0] + 5, data[0, 1] + 0.05, f"t=0", fontdict=fontdict)
+        #plt.text(data[4, 0] + 5, data[4, 1] + 0.05, f"t={steps[4]}", fontdict=fontdict)
+        #plt.text(data[-1, 0] + 5, data[-1, 1] + 0.05, f"t={steps[-1]}", fontdict=fontdict, color="black")
 
     for idx, (metric, data) in enumerate(neg_data.items()):
         legends += [f"{legends[idx]}(negative)"]
-        plt.scatter(data[:, 0], data[:, 1], s=200, c=colors[idx + size], marker=markers[idx + size])
+        plt.scatter(data[:, 0], data[:, 1], s=markersize**2, marker=markers_neg, c=colors[idx])
 
-    plt.legend(labels=legends, loc='best', fontsize=fontsize)
-    plt.xlim((0, 101))
+    #plt.legend(labels=legends, loc='best', fontsize=fontsize)
+    #plt.xlim((80, 101))
     plt.ylim((0, 1.01))
+    plt.xticks(np.arange(80, 100, 5))
     plt.xticks(fontsize=fontsize)
     plt.yticks(fontsize=fontsize)
     plt.xlabel("Accuracy (%)", fontsize=fontsize)
-    plt.ylabel("Distance (Normalized)", fontsize=fontsize)
+    plt.ylabel("Distance", fontsize=fontsize)
     plt.savefig(path)
     print(f"-> saving fig: {path}")
 
@@ -111,6 +122,9 @@ def view_learning_state(data, file_path, fontsize=30):
         plt.text(float(np.argmin(y) * 20.0), np.min(y) - 3, round(float(np.min(y)), 2), fontsize=fontsize-5)
         plt.plot(x, np.repeat(np.max(y), len(x)), color="black", linewidth=3, linestyle="dashdot")
         plt.text(float(np.argmax(y) * 20.0), np.max(y) + 3, round(float(np.max(y)), 2), fontsize=fontsize-5)
+        last_y = float(y[-1])
+        plt.text(float(len(y)-1) * 20.0, last_y + 3, round(last_y, 2), fontsize=fontsize - 5)
+
 
         plt.xlabel("Iteration", fontsize=fontsize)
         plt.ylabel(key.upper(), fontsize=fontsize)
@@ -141,7 +155,7 @@ def view_layer_activation(model_T, model_t, x, y, ori_x, target_layer, fig_path,
     fused_camt = CAM1.fuse_cams(cams).detach().cpu()
     CAM1.remove_hooks()
 
-    fig = plt.figure(figsize=(14, 4 + size * 2), dpi=200)
+    fig = plt.figure(figsize=(10, 4 + size * 2), dpi=200)
     img_idx = 0
     for idx in range(size):
         # original image
@@ -167,7 +181,7 @@ def view_layer_activation(model_T, model_t, x, y, ori_x, target_layer, fig_path,
     plt.savefig(pth)
     print(f"-> Saving OverLay:{pth}")
 
-    fig = plt.figure(constrained_layout=True, figsize=(10, 4 + size * 3), dpi=200)
+    fig = plt.figure(constrained_layout=True, figsize=(8, 4 + size * 3), dpi=200)
     # Left collum
     subfigs = fig.subfigures(1, 2, wspace=0.1, hspace=0.1)
     axsLeft = subfigs[0].subplots(size, 1)

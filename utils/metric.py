@@ -30,6 +30,7 @@ def topk_test(model, test_loader, device, epoch=0, debug=False):
     }
     model.to(device)
     size = 0
+    model.eval()
     with torch.no_grad():
         for batch_idx, (x, y) in enumerate(test_loader):
             x, y = x.to(device), y.to(device)
