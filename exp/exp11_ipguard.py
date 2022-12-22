@@ -38,7 +38,7 @@ def get_args():
     parser.add_argument("-tag", required=False, type=str, help="tag of script.")
     parser.add_argument("-test_size", required=False, type=int, default=500, help="tag of script.")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
     parser.add_argument("-removal", default=0, type=int, choices=[0, 1], help="Eval Removal?")
     args, unknown = parser.parse_known_args()
     args.ROOT = helper.ROOT
@@ -56,7 +56,7 @@ def get_args():
 
 def exp11_eval(args, methods, debug=False):
     result = {}
-    tag = f"{args.dataset}_train({args.arch},{args.dataset})-_t{args.targeted}k{args.k}"
+    tag = f"{args.dataset}_{args.arch}_t{args.targeted}k{args.k}"
     path = osp.join(args.proj_root, f"exp/exp11_{tag}.pt")
     if debug or not osp.exists(path):
         cfg = dloader.load_cfg(dataset_id=args.dataset, arch_id=args.arch)
@@ -142,11 +142,11 @@ def main(args):
 
     # eval baseline
     tag, results = exp11_eval(args, methods)
-    fpath = osp.join(args.proj_root, f"pdf/exp11_{tag}_boxplot.pdf")
+    fpath = osp.join(args.proj_root, f"pdf/exp11_{tag}_r{args.model2}.pdf")
 
     if args.removal:
         # eval removal attack
-        steps = np.arange(800, 999, 20)
+        steps = np.arange(800, 1000, 20)
         r_results = exp11_eval_removalnet(args, metrics=metrics, steps=steps)
         r_results.update(results)
         results = r_results

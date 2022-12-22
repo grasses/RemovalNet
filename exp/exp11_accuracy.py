@@ -15,7 +15,7 @@ def get_args():
                         help="Path to the dir of benchmark models.")
     parser.add_argument("-model", type=str, required=True, help="model")
     parser.add_argument("-batch_size", default=100, type=int, help="GPU device id")
-    parser.add_argument("-start", type=int, required=True, help="model iteration")
+    parser.add_argument("-start", type=int, default=820, help="model iteration")
     parser.add_argument("-gap", default=20, type=int, help="model iteration")
     parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
@@ -43,7 +43,7 @@ def main():
 
     # eval accuracy of surrogate model
     surr_acc = []
-    for t in np.arange(args.start, 1000, args.gap):
+    for t in np.arange(args.start, 1001, args.gap):
         ckpt = osp.join(args.models_dir, surrogate_model.task, f'final_ckpt_s{args.seed}_t{t}.pth')
         surrogate_model.load_state_dict(torch.load(ckpt, map_location="cpu")["state_dict"])
         surrogate_model.to(args.device)

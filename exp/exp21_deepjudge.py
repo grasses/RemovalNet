@@ -38,8 +38,8 @@ def get_args():
     parser.add_argument("-batch_size", required=False, type=int, default=200, help="tag of script.")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
     parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
-    parser.add_argument("-start", default=620, type=int, help="Gap between two pretrained model")
-    parser.add_argument("-gap", default=40, type=int, help="Gap between two pretrained model")
+    parser.add_argument("-start", default=100, type=int, help="Gap between two pretrained model")
+    parser.add_argument("-gap", default=100, type=int, help="Gap between two pretrained model")
     args, unknown = parser.parse_known_args()
     args.ROOT = helper.ROOT
     args.namespace = helper.curr_time
@@ -75,6 +75,8 @@ def exp21_eval(args, neg_dist, metrics, min_v, max_v):
 
 
     if not osp.exists(exp_path):
+        result["step"] = np.arange(args.start, 1001, args.gap).tolist()
+
         # step2.1: load DeepJudge
         deepjudge = DeepJudge(model1, model2, test_loader=test_loader,
                               device=args.device, seed=args.seed, out_root=args.proj_root,
@@ -82,7 +84,7 @@ def exp21_eval(args, neg_dist, metrics, min_v, max_v):
                               layer_index=args.layer_index, seed_method=args.seed_method)
         fingerprint = deepjudge.extract()
 
-        # step2.2: eval DeepJudge & Acc
+        # step2.2: eval DeepJudge & Acc of source model
         phar = tqdm(np.arange(args.start, 1001, args.gap))
         for step in phar:
             ckpt = osp.join(args.models_dir, model2.task, f'final_ckpt_s{args.seed}_t{step}.pth')
@@ -118,19 +120,23 @@ def exp21_eval(args, neg_dist, metrics, min_v, max_v):
             result["neg_acc"].append(round(float(topk_acc["top1"]), 4))
             print(f"-> step negative acc:{result['neg_acc']}")
         torch.save(result, exp_path)
-
     result = torch.load(exp_path)
+
     # step2.3: normalize & reformat data
     for idx, (metric, dist) in enumerate(result["neg_dist"].items()):
         result["neg_plot"][metric] = []
-        for x, y in zip(result["acc"], dist):
+        for x, y in zip(result["neg_acc"], dist):
             x = round(x * 100.0, 2) if x < 1 else x
             result["neg_plot"][metric].append([x, y])
         result["neg_plot"][metric] = np.array(result["neg_plot"][metric], dtype=np.float32)
 
     # step2.3: normalize & reformat data
+    model1 = benchmk.load_wrapper(args.model1, seed=1000).load_torch_model()
+    _, topk_acc, _ = metric_fun.topk_test(model1, test_loader, device=args.device, epoch=0)
+    source_acc = topk_acc["top1"]
+    source_dist = 0.0
     for idx, (metric, dist) in enumerate(result["dist"].items()):
-        result["plot"][metric] = []
+        result["plot"][metric] = [[source_acc, source_dist]]
         dist = normalize(dist, min_v=min_v[idx], max_v=max_v[idx])
         for x, y in zip(result["acc"], dist):
             x = round(x * 100.0, 2) if x < 1 else x
@@ -145,6 +151,8 @@ def main():
     metrics = ["LOD", "LAD"]
     methods = ["distill", "finetune", "prune", "negative", "steal"]
     arch, dataset = args.model1.split("(")[1].split(")")[0].split(",")
+    if dataset in ["CIFAR10", "CINIC10", "CelebA32+20", "CelebA32+31"]:
+        args.batch_size = 500
 
     # step1: read normalized data
     tag = f"{dataset}_{arch}_L{args.layer_index}"
@@ -171,7 +179,7 @@ def main():
         metrics[idx] = f"DeepJudge-{metric}"
 
     exp_path = osp.join(args.proj_root, f"pdf/exp21_{dataset}_{arch}_L{args.layer_index}_r{args.model2}.pt")
-    vis.plot_accuracy_dist_curve(result["plot"], result["neg_plot"], legends=metrics, path=exp_path.replace(".pt", ".pdf"))
+    vis.plot_accuracy_dist_curve(result["plot"], result["neg_plot"], steps=result["step"], legends=metrics, path=exp_path.replace(".pt", ".pdf"))
 
 
 if __name__ == "__main__":

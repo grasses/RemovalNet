@@ -8,15 +8,13 @@ __copyright__ = 'Copyright © 2022/09/23, homeway'
 """
 This script is used to evaluate benchmark of ZEST
 """
-
-
-import os, argparse, logging
+import os, argparse
 import os.path as osp
 import torch
 import numpy as np
-from exp import vis
+from exp import vis, ops
 from tqdm import tqdm
-from utils import helper, metric, vis
+from utils import helper, metric as metric_fun, vis
 from defense.ZEST.zest import ZEST
 from benchmark import ImageBenchmark
 from dataset import loader as dloader
@@ -31,26 +29,17 @@ def get_args():
     parser.add_argument("-model1", action="store", dest="model1", required=True, help="model 1.")
     parser.add_argument("-model2", action="store", dest="model2", required=True, help="model 2.")
     parser.add_argument("-tag", required=False, type=str, help="tag of script.")
-    parser.add_argument("-seed_method", action="store", default="PGD", type=str, choices=["FGSM", "PGD", "CW"],
-                        help="Type of blackbox generation")
-    parser.add_argument("-batch_size", required=False, type=int, default=100, help="tag of script.")
-    parser.add_argument("-dataset", required=True, type=str, default="CIFAR10", help="model archtecture")
+    parser.add_argument("-batch_size", required=False, type=int, default=200, help="tag of script.")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
-    parser.add_argument("-gap", default=50, type=int, help="Gap between two pretrained model")
+    parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-start", default=100, type=int, help="Gap between two pretrained model")
+    parser.add_argument("-gap", default=100, type=int, help="Gap between two pretrained model")
     args, unknown = parser.parse_known_args()
     args.ROOT = helper.ROOT
     args.namespace = helper.curr_time
     args.out_root = osp.join(args.ROOT, "output")
     args.logs_root = osp.join(args.ROOT, "logs")
-    args.zest_root = osp.join(args.out_root, "ZEST", "exp")
-    args.archs = {
-        "CIFAR10": ["resnet50"],
-        "ImageNet": ["resnet50"],
-    }
-    for attr_idx in range(40):
-        args.archs[f"CelebA+{attr_idx}"] = ["vgg19_bn"]
-
+    args.proj_root = osp.join(args.out_root, "ZEST")
     args.device = torch.device(f"cuda:{args.device}") if torch.cuda.is_available() else "cpu"
     helper.set_default_seed(seed=args.seed)
     for path in [args.datasets_dir, args.models_dir, args.out_root, args.logs_root]:
@@ -59,112 +48,150 @@ def get_args():
     return args
 
 
-def rename_metric(key):
-    if key == "2":
-        key = "L2"
-    elif key == "1":
-        key = "L1"
-    elif key == "inf":
-        key = "Linf"
-    elif key == "cosine":
-        key = "Cosine"
-    return key
-
-def normalize(vs):
-    return [(v - np.min(v)) / (np.max(v) - np.min(v) + 1e-6) for v in vs]
+def normalize(vs, min_v, max_v):
+    return [min(1., (v - min_v) / (max_v - min_v + 1e-6)) for v in vs]
 
 
-def exp21_eval(args):
-    out_root = osp.join(args.out_root, "ZEST")
-    benchmk = ImageBenchmark(archs=args.archs, datasets=[args.dataset],
-        datasets_dir=args.datasets_dir, models_dir=args.models_dir)
-    model1 = benchmk.load_wrapper(args.model1, seed=args.seed).load_torch_model()
+def exp21_eval(args, neg_dist, metrics, min_v, max_v):
+    result = {"neg_acc": [], "neg_plot": {}, "acc": [], "dist": {}, "step": [], "plot":{}}
+    for metric in metrics:
+        result["dist"][metric] = []
+        result["plot"][metric] = []
 
-    benchmk = ImageBenchmark(archs=args.archs, datasets=[args.dataset],
+    arch, dataset = args.model1.split("(")[1].split(")")[0].split(",")
+    exp_path = osp.join(args.proj_root, f"exp/exp21_{dataset}_{arch}_r{args.model2}.pt")
+
+    benchmk = ImageBenchmark(archs=[arch], datasets=[dataset],
                              datasets_dir=args.datasets_dir, models_dir=args.models_dir)
+    model1 = benchmk.load_wrapper(args.model1, seed=1000).load_torch_model()
     model2 = benchmk.load_wrapper(args.model2, seed=args.seed).load_torch_model()
-    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=128)
+    test_loader = dloader.get_dataloader(dataset_id=dataset, split="test", batch_size=args.batch_size)
 
-    path = osp.join(args.zest_root, f"exp21_{args.dataset}_{args.model2}.pt")
-    device = torch.device("cpu") if "quantize" in str(args.model2) else args.device
 
-    results = {
-        # distance of different metric
-        "dist": {
-            "L1": [],
-            "L2": [],
-            "Cosine": [],
-            "Linf": []
-        },
-        # accuracy of model
-        "topk": {
-            "top1": [],
-            "top3": [],
-            "top5": [],
-        },
-        # plot (x, y) pairs
-        "plot": {
-            "L1": [],
-            "L2": [],
-            "Cosine": [],
-            "Linf": []
-        }
-    }
+    if not osp.exists(exp_path):
+        result["step"] = np.arange(args.start, 1001, args.gap).tolist()
 
-    print("-> path", path)
-    if not osp.exists(path):
-        phar = tqdm(np.arange(args.gap, 1000+args.gap, args.gap))
-        for t in phar:
-            # load intermediate model
-            fname = f"final_ckpt_s{args.seed}_t{t}.pth"
-            ckpt = osp.join(args.models_dir, args.model2, fname)
-            if osp.exists(ckpt):
-                model2.load_state_dict(torch.load(ckpt, map_location="cpu")["state_dict"])
-                model2.eval()
-                model2.to(args.device)
-            else:
-                raise FileNotFoundError(f"-> FileNotFound: {ckpt}")
+        # step2.1: load ZEST
+        zest = ZEST(model1, model2, test_loader=test_loader, device=args.device,
+                    out_root=args.proj_root,
+                    seed=args.seed)
 
-            # eval ZEST
-            zest = ZEST(model1, model2, test_loader=test_loader, device=device, out_root=out_root, seed=args.seed)
+        # step2.2: eval ZEST & Acc of source model
+        phar = tqdm(np.arange(args.start, 1001, args.gap))
+        for step in phar:
+            ckpt = osp.join(args.models_dir, model2.task, f'final_ckpt_s{args.seed}_t{step}.pth')
+            if not osp.exists(ckpt):
+                raise FileNotFoundError(f"-> model not found:{ckpt}")
+            weights = torch.load(ckpt)["state_dict"]
+            zest.model2.load_state_dict(weights)
+            zest.model2.to(args.device)
+            result["step"].append(int(step))
+
+            # step2.2: eval ZEST
             fingerprint = zest.extract(cache=False)
-            dist = zest.verify(fingerprint)
-            phar.set_description(f"-> model:{fname} dist:{dist}")
-            for k, v in dist.items():
-                results["dist"][rename_metric(k)].append(float(v))
-            # eval accuracy
-            _, topk_acc, _ = metric.topk_test(model2, test_loader, device=args.device, epoch=0)
-            for k, v in topk_acc.items():
-                results["topk"][k].append(round(float(v)/100.0, 4))
-        # rectify results
-        for k, v in results["topk"].items():
-            results["topk"][k] = np.array(v, dtype=np.float)
-        for k, v in results["dist"].items():
-            k = rename_metric(k)
-            results["dist"][k] = np.array(v, dtype=np.float)
-        torch.save(results, path)
-    else:
-        results = torch.load(path, map_location="cpu")
+            item = zest.verify(fingerprint)
+            for metric in item.keys():
+                if metric not in metrics: continue
+                result["dist"][metric].append(item[metric])
+            # step2.2: eval Acc
+            _, topk_acc, _ = metric_fun.topk_test(model2, test_loader, device=args.device, epoch=0)
+            result["acc"].append(round(float(topk_acc["top1"]), 4))
+            phar.set_description(f"-> Removal({step}): ZEST(L{arch,dataset}) {item} Acc:{topk_acc['top1']}")
 
-    for k, v in results["dist"].items():
-        k = rename_metric(k)
-        results["plot"][k] = []
-        for x, y in zip(results["topk"]["top1"], v):
-            results["plot"][k].append([x, y])
-        results["plot"][k] = np.array(results["plot"][k], dtype=np.float)
-        item = np.array(results["plot"][k], dtype=np.float)
-        #results["plot"][k] = item[item[:, 0].argsort()]
+        # eval accuracy for negative
+        result["neg_acc"] = []
+        result["neg_dist"] = neg_dist
+        result["neg_plot"] = {}
+        for seed in np.arange(100, 1001, 100):
+            ckpt = osp.join(args.models_dir, model1.task + f"negative({arch})-", f'final_ckpt_s{seed}.pth')
+            if not osp.exists(ckpt):
+                raise FileNotFoundError(f"-> model not found:{ckpt}")
+            weights = torch.load(ckpt)["state_dict"]
+            model1.load_state_dict(weights)
+            model1.eval()
+            _, topk_acc, _ = metric_fun.topk_test(model1, test_loader, device=args.device, epoch=0)
+            result["neg_acc"].append(round(float(topk_acc["top1"]), 4))
+            print(f"-> step negative acc:{result['neg_acc']}")
+        torch.save(result, exp_path)
+    result = torch.load(exp_path)
 
-    vis.plot_accuracy_dist_curve(results["plot"], metrics=["L2"], path=path.replace(".pt", ".pdf"))
+    # step2.3: normalize & reformat data
+    for idx, (metric, dist) in enumerate(result["neg_dist"].items()):
+        result["neg_plot"][metric] = []
+        for x, y in zip(result["neg_acc"], dist):
+            x = round(x * 100.0, 2) if x < 1 else x
+            result["neg_plot"][metric].append([x, y])
+        result["neg_plot"][metric] = np.array(result["neg_plot"][metric], dtype=np.float32)
+
+    # step2.3: normalize & reformat data
+    model1 = benchmk.load_wrapper(args.model1, seed=1000).load_torch_model()
+    _, topk_acc, _ = metric_fun.topk_test(model1, test_loader, device=args.device, epoch=0)
+    source_acc = topk_acc["top1"]
+    source_dist = 0.0
+    for idx, (metric, dist) in enumerate(result["dist"].items()):
+        result["plot"][metric] = [[source_acc, source_dist]]
+        dist = normalize(dist, min_v=min_v[idx], max_v=max_v[idx])
+        for x, y in zip(result["acc"], dist):
+            x = round(x * 100.0, 2) if x < 1 else x
+            result["plot"][metric].append([x, y])
+        result["plot"][metric] = np.array(result["plot"][metric], dtype=np.float32)
+    torch.save(result, exp_path)
+    return result
 
 
 def main():
     args = get_args()
-    exp21_eval(args)
+    metrics = ["L2", "cosine"]
+    methods = ["distill", "finetune", "prune", "negative", "steal"]
+    arch, dataset = args.model1.split("(")[1].split(")")[0].split(",")
+
+    # step1: read normalized data
+    tag = f"{dataset}_{arch}"
+    fpath = osp.join(args.proj_root, f"exp/exp11_{tag}.pt")
+    results = torch.load(fpath, map_location="cpu")
+
+    rpath = osp.join(args.proj_root, f"exp/exp11_{dataset}_{arch}_r{args.model2}.pt")
+    rresults = torch.load(rpath, map_location="cpu")
+    rresults.update(results)
+
+    cache = ops.exp11_normalize(rresults, methods=["removalnet"]+methods, metrics=metrics, defense_method="ZEST")
+    min_v, max_v = cache["min_v"], cache["max_v"]
+    print(f"-> min:{min_v} max:{max_v}")
+
+    neg_dist = {}
+    for idx, metric in enumerate(metrics):
+        neg_dist[metric] = cache["dists_nz"][idx, 1].tolist()
+
+    # step2: eval ZEST & Acc
+    result = exp21_eval(args, neg_dist, metrics, min_v, max_v)
+
+    # step3: plot curve
+    for idx, metric in enumerate(metrics):
+        metrics[idx] = f"ZEST-{metric}"
+
+    exp_path = osp.join(args.proj_root, f"pdf/exp21_{dataset}_{arch}_r{args.model2}.pt")
+    vis.plot_accuracy_dist_curve(result["plot"], result["neg_plot"], steps=result["step"], legends=metrics, path=exp_path.replace(".pt", ".pdf"))
 
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

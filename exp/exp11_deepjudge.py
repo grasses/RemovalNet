@@ -159,16 +159,16 @@ def main():
     args = get_args()
     print(f"-> Running with config:{args}")
 
-    metrics = ["LOD", "LAD",]
+    metrics = ["LOD", "LAD"]
     methods = ["distill", "finetune", "prune", "negative", "steal"]
 
     # eval baseline
     tag, results = exp11_eval(args, methods)
-    fpath = osp.join(args.proj_root, f"pdf/exp11_{tag}_boxplot.pdf")
+    fpath = osp.join(args.proj_root, f"pdf/exp11_{args.dataset}_{args.arch}_L{args.layer_index}_r{args.model2}.pdf")
 
     if args.removal:
         # eval removal attack
-        steps = np.arange(800, 999, 20)
+        steps = np.arange(800, 1000, 20)
         r_results = exp11_eval_removalnet(args, metrics=metrics, steps=steps)
         r_results.update(results)
         results = r_results

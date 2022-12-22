@@ -129,7 +129,7 @@ def exp11_eval_removalnet(args, metrics, steps):
 
         zest_path = zest.fp_path
         phar = tqdm(steps)
-        for step in steps:
+        for step in phar:
             ckpt = osp.join(args.models_dir, model2.task, f'final_ckpt_s{args.seed}_t{step}.pth')
             if not osp.exists(ckpt):
                 raise FileNotFoundError(f"-> model not found:{ckpt}")
@@ -155,20 +155,21 @@ def main():
     args = get_args()
     print(f"-> Running with config:{args}")
 
-    metrics = ["L2", "L1"]
+    metrics = ["L2", "cosine"]
     methods = ["distill", "finetune", "prune", "negative", "steal"]
 
     # eval baseline
     tag, results = exp11_eval(args, methods)
-    fpath = osp.join(args.proj_root, f"pdf/exp11_{tag}_boxplot.pdf")
+    fpath = osp.join(args.proj_root, f"pdf/exp11_{tag}_r{args.model2}.pdf")
 
     if args.removal:
         # eval removal attack
-        steps = np.arange(800, 999, 20)
+        steps = np.arange(800, 1000, 20)
         r_results = exp11_eval_removalnet(args, metrics=metrics, steps=steps)
         r_results.update(results)
         results = r_results
         methods = ["removalnet"] + methods
+
     # view via boxplot
     data = ops.exp11_normalize(results, methods=methods, metrics=metrics, defense_method="ZEST")
     vis.boxplot_distance(data["dists_nz"], metrics=data["legends"], xticks=data["xticks"], ylabel=data["ylabel"], fpath=fpath)

@@ -2,7 +2,7 @@
 import numpy as np
 
 
-def exp11_normalize(results, methods, metrics, defense_method):
+def exp11_normalize(results, methods, metrics, defense_method, model_size=10):
     target_models = []
     for model, item in results.items():
         method = model.split("-")[2].split("(")[0]
@@ -10,10 +10,11 @@ def exp11_normalize(results, methods, metrics, defense_method):
             target_models.append(model)
 
     # transform data structure
-    dists = np.zeros([len(metrics), len(target_models), 10])
+    dists = np.zeros([len(metrics), len(target_models), model_size])
     for i, metric in enumerate(metrics):
         for j, model in enumerate(target_models):
-            dists[i, j] = results[model][metric]
+            print(model, metric, results[model][metric])
+            dists[i, j] = results[model][metric][:model_size]
 
         if np.mean(dists[i]) < 100:
             print(metric, np.array(dists[i] * 100, dtype=np.int32))
@@ -29,7 +30,7 @@ def exp11_normalize(results, methods, metrics, defense_method):
     dists_nz = np.copy(dists)
     for i, metric in enumerate(metrics):
         for j, model in enumerate(target_models):
-            dists_nz[i, j] = (dists[i, j] - min_v[i]) / (max_v[i] - min_v[i] + 1e-6)
+            dists_nz[i, j] = (dists[i, j] - min_v[i]) / (max_v[i] - min_v[i] + 1e-8)
             if defense_method in ["ModelDiff"]:
                 dists_nz[i, j] = np.ones(len(dists_nz[i, j])) - dists_nz[i, j]
 

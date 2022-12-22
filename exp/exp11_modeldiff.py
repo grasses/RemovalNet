@@ -86,7 +86,9 @@ def exp11_eval(args, methods, debug=False):
                 result[key] = {
                     "DDV": [],
                     "DDM": [],
-                    "MR": []
+                    "MR": [],
+                    "WS": [],
+                    "WS_abs": []
                 }
             model2 = model.torch_model(seed=model.seed)
             modeldiff = ModelDiff(model1, model2, test_loader=test_loader, device=device, out_root=args.proj_root, seed=model.seed, epsilon=float(args.epsilon))
@@ -157,11 +159,11 @@ def main():
 
     # eval baseline
     tag, results = exp11_eval(args, methods)
-    fpath = osp.join(args.proj_root, f"pdf/exp11_{tag}_boxplot.pdf")
+    fpath = osp.join(args.proj_root, f"pdf/exp11_{tag}_r{args.model2}.pdf")
 
     if args.removal:
         # eval removal attack
-        steps = np.arange(800, 999, 20)
+        steps = np.arange(800, 1000, 20)
         r_results = exp11_eval_removalnet(args, metrics=metrics, steps=steps)
         r_results.update(results)
         results = r_results

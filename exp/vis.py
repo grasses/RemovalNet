@@ -8,7 +8,7 @@ __copyright__ = 'Copyright © 2022/10/10, homeway'
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.preprocessing import normalize
-
+colors = list(plt.rcParams['axes.prop_cycle'].by_key()['color'])
 
 def rename_labels(labels):
     for idx, name in enumerate(labels):
@@ -56,32 +56,25 @@ def normalize_dict(x, reverse=False):
     return x.tolist()
 
 
-def plot_boxplot(data, xticklabels, fpath=None, fontsize=25):
-    colors = ['pink', 'lightblue', 'lightgreen', 'bisque', 'lime', 'maroon']
-    figure, ax = plt.subplots(figsize=(20, 10), dpi=160)
+def plot_boxplot(data, xticklabels, fpath=None, fontsize=20):
+    figure, ax = plt.subplots(figsize=(24, 10), dpi=200)
     ax.yaxis.grid(True)
 
-    off = 0
+    off = -0.2
     legends, bplots = [], []
     for idx, (lenged, item) in enumerate(data.items()):
-        '''
-        if "cos" in lenged:
-            item = normalize_dict(item, reverse=True)
-        else:
-            item = normalize_dict(item)
-        '''
-        bplot = ax.boxplot(item, widths=0.15, showfliers=False, patch_artist=True, positions=np.arange(len(item))+off)
+        bplot = ax.boxplot(item, widths=0.1, showfliers=False, patch_artist=True, positions=np.arange(len(item))+off)
         legends.append(lenged)
         bplots.append(bplot["boxes"][0])
-        off += 0.2
         for patch in bplot["boxes"]:
             patch.set_facecolor(colors[idx])
+        off += 0.4
 
     legends = rename_labels(legends)
-    ax.legend(bplots, legends, loc='best', fontsize=fontsize)
+    ax.legend(bplots, legends, loc='best', fontsize=fontsize-10)
     plt.setp(ax, xticks=np.arange(len(item)), xticklabels=rename_labels(xticklabels))
     plt.xticks(fontsize=fontsize-10)
-    plt.yticks(fontsize=fontsize-5)
+    plt.yticks(fontsize=fontsize-10)
     print(f"-> save figugre:{fpath}")
     plt.savefig(fpath)
 
@@ -90,25 +83,22 @@ def plot_boxplot(data, xticklabels, fpath=None, fontsize=25):
 def boxplot_distance(dists, metrics, xticks, ylabel, fpath, fontsize=28):
     off_x = 0
     bplots, legends = [], []
-    colors = ['pink', 'lightblue', 'lightgreen', 'bisque', 'lime', 'maroon']
-
     figure, ax = plt.subplots(figsize=(20, 10), dpi=160)
     ax.yaxis.grid(True)
     for idx, metric in enumerate(metrics):
         item = dists[idx].tolist()
-        bplot = ax.boxplot(item, widths=0.15, showfliers=False, patch_artist=True, positions=np.arange(len(item)) + off_x)
+        bplot = ax.boxplot(item, widths=0.12, showfliers=False, patch_artist=True, positions=np.arange(len(item)) - 0.4 + off_x)
         legends.append(metric)
         bplots.append(bplot["boxes"][0])
         off_x += 0.2
         for patch in bplot["boxes"]:
             patch.set_facecolor(colors[idx])
     legends = rename_labels(legends)
-    ax.legend(bplots, legends, loc='best', fontsize=fontsize)
+    ax.legend(bplots, legends, loc='best', fontsize=fontsize-5)
     plt.setp(ax, xticks=np.arange(len(item)), xticklabels=rename_labels(xticks))
-    plt.xticks(fontsize=fontsize - 5)
-    plt.yticks(fontsize=fontsize - 5)
-    plt.ylabel("Model Reuse", fontsize=fontsize - 5)
-    plt.ylabel(ylabel, fontsize=fontsize - 5)
+    plt.xticks(fontsize=fontsize - 8)
+    plt.yticks(fontsize=fontsize - 8)
+    plt.ylabel(ylabel, fontsize=fontsize - 8)
     print(f"-> save figugre:{fpath}")
     plt.savefig(fpath)
 
