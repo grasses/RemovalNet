@@ -353,8 +353,8 @@ class ModelDiff(Fingerprinting):
         ddv1 = self.normalize(np.array(ddv1))
         ddv2 = self.normalize(np.array(ddv2))
 
-        ddv_distance = spatial.distance.euclidean(ddv1, ddv2)
-        #ddv_distance = self.compare_ddv(ddv1, ddv2)
+        #ddv_distance = spatial.distance.euclidean(ddv1, ddv2)
+        ddv_distance = self.compare_ddv(ddv1, ddv2)
         model_similarity = 1 - ddv_distance
         return model_similarity
 

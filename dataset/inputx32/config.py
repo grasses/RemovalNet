@@ -46,30 +46,50 @@ def load_cfg(dataset_id):
     if dataset_id == "CIFAR10":
         args.TRAIN_ITERS = 50000
         args.STEAL_ITERS = 3000
-        args.NEGATIVE_ITERS = 12000
-        args.DISTILL_ITERS = 10000
-        args.PRUNE_ITERS = 1000
-        args.QUANTIZE_ITERS = 1000
-        args.FINETUNING_ITERS = 1000
+        args.NEGATIVE_ITERS = 10000
+        args.DISTILL_ITERS = 200
+        args.PRUNE_ITERS = 200
+        args.QUANTIZE_ITERS = 200
+        args.FINETUNING_ITERS = 200
 
     elif dataset_id == "CINIC10":
         args.TRAIN_ITERS = 50000
-        args.STEAL_ITERS = 20000
+        args.STEAL_ITERS = 10000
         args.NEGATIVE_ITERS = 10000
-        args.DISTILL_ITERS = 10000
-        args.QUANTIZE_ITERS = 1000
-        args.PRUNE_ITERS = 1000
-        args.FINETUNING_ITERS = 1000
+        args.DISTILL_ITERS = 100
+        args.QUANTIZE_ITERS = 100
+        args.PRUNE_ITERS = 100
+        args.FINETUNING_ITERS = 100
 
     elif "CelebA32" in dataset_id:
         args.lr = 6e-3
         args.resize_size = 40
         args.TRAIN_ITERS = 20000
-        args.STEAL_ITERS = 5000
+        args.STEAL_ITERS = 10000
         args.NEGATIVE_ITERS = 5000
-        args.DISTILL_ITERS = 5000
+        args.DISTILL_ITERS = 500
         args.PRUNE_ITERS = 500
         args.QUANTIZE_ITERS = 500
+        args.FINETUNING_ITERS = 500
+
+    elif "SkinCancer" in dataset_id:
+        args.lr = 5e-3
+        args.TRAIN_ITERS = 20000
+        args.STEAL_ITERS = 10000
+        args.NEGATIVE_ITERS = 10000
+        args.DISTILL_ITERS = 500
+        args.QUANTIZE_ITERS = 500
+        args.PRUNE_ITERS = 500
+        args.FINETUNING_ITERS = 500
+
+    elif "HAM10000" in dataset_id:
+        args.lr = 1e-2
+        args.TRAIN_ITERS = 20000
+        args.STEAL_ITERS = 10000
+        args.NEGATIVE_ITERS = 10000
+        args.DISTILL_ITERS = 500
+        args.QUANTIZE_ITERS = 500
+        args.PRUNE_ITERS = 500
         args.FINETUNING_ITERS = 500
 
     args.CONTINUE_TRAIN = False

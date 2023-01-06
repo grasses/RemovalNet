@@ -14,17 +14,15 @@ import logging
 from torchvision import transforms
 from utils import ops
 from . import inputx32, inputx64, inputx224
-from dataset.inputx32 import CIFAR10, CINIC10, CelebA32
-from dataset.inputx224.lfw import LFW
-from dataset.inputx224.celeba import CelebA
-from dataset.inputx224.imagenet import ImageNet
+from dataset.inputx32 import CIFAR10, CINIC10, CelebA32, LFW32, SkinCancer, BCN20000, HAM10000
+from dataset.inputx224 import LFW, CelebA, ImageNet
 
 DATA_ROOT = osp.join(osp.abspath(osp.dirname(__file__)), "data")
 logger = logging.getLogger('DataLoader')
 
 task_list = {
-    "CV32": ["CIFAR10", "CINIC10", "CelebA32"],
-    "CV224": ["CelebA", "ImageNet", "LFW"],
+    "CV32": ["CIFAR10", "CINIC10", "CelebA32", "LFW32", "SkinCancer", "BCN20000", "HAM10000"],
+    "CV224": ["ImageNet", "CelebA", "LFW"],
     "AUDIO": ["SpeechCommands"],
 }
 for i in range(40):
@@ -41,9 +39,13 @@ def get_num_classess(dataset_id):
     NUM_CLASSES = {
         "CIFAR10": 10,
         "CINIC10": 10,
+        "SkinCancer": 7,
+        "BCN20000": 7,
+        "HAM10000": 7,
         "CelebA": 2,
         "CelebA32": 2,
         "LFW": 2,
+        "LFW32": 2,
         "ImageNet": 1000,
     }
     for i in range(40):
@@ -57,6 +59,10 @@ def get_size(dataset_id):
         "CIFAR10": 32,
         "CINIC10": 32,
         "CelebA32": 32,
+        "LFW32": 32,
+        "SkinCancer": 32,
+        "BCN20000": 32,
+        "HAM10000": 32,
         "LFW": 224,
         "CelebA": 224,
         "Flower102": 224,

@@ -48,7 +48,7 @@ def load_cfg(dataset_id):
         args.TRAIN_ITERS = 20000
         args.NEGATIVE_ITERS = 20000
         args.STEAL_ITERS = 20000
-        args.DISTILL_ITERS = 10000
+        args.DISTILL_ITERS = 500
         args.QUANTIZE_ITERS = 500
         args.PRUNE_ITERS = 500
         args.FINETUNING_ITERS = 500

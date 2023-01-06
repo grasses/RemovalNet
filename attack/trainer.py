@@ -124,7 +124,7 @@ class Trainer:
             model = model.to(args.device)
 
         # simulate: add noise to iterations
-        iterations = int(self.args.iterations * (0.7 + np.random.randint(10, 30) / 100.0))
+        iterations = int(self.args.iterations * (0.8 + np.random.randint(10, 20) / 100.0))
 
         start_step = 0
         alpha = np.random.randint(20, 40) / 100.0

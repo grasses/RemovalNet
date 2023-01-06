@@ -16,6 +16,7 @@ import os.path as osp
 import torch
 import numpy as np
 from tqdm import tqdm
+from . import comm
 from utils import helper
 from . import vis, ops
 
@@ -57,35 +58,9 @@ def main():
     args = get_args()
     methods = ["distill", "finetune", "prune", "negative", "steal"]
     metrics = ["LOD", "LAD", "L2", "cosine"]
-    task_dict = {
-        "CIFAR10": [
-            "train(resnet50,CIFAR10)-removalnet(CIFAR10,1.0,0.11,1.0,10,l3)-",
-            "train(densenet121,CIFAR10)-removalnet(CIFAR10,1.0,0.1,0.5,20,l2)-",
-            "train(vgg16_bn,CIFAR10)-removalnet(CIFAR10,1.0,0.1,0.5,20,l3)-",
-            "train(vgg19_bn,CIFAR10)-removalnet(CIFAR10,1.0,0.1,1.0,20,l3)-",
-            "train(mobilenet_v2,CIFAR10)-removalnet(CIFAR10,1.0,0.05,1.0,10,l3)-"
-        ],
-        "CelebA32+20": [
-            "train(resnet50,CelebA32+20)-removalnet(CelebA32+20,1.0,0.2,1.0,20,l3)-",
-            "train(densenet121,CelebA32+20)-removalnet(CelebA32+20,1.0,0.2,1.0,20,l3)-",
-            "train(vgg16_bn,CelebA32+20)-removalnet(CelebA32+20,1.0,0.2,1.0,20,l3)-",
-            "train(vgg19_bn,CelebA32+20)-removalnet(CelebA32+20,1.0,0.2,1.0,20,l3)-",
-            "train(mobilenet_v2,CelebA32+20)-removalnet(CelebA32+20,1.0,0.2,1.0,20,l3)-"
-        ],
-        "CelebA32+31": [
-            "train(resnet50,CelebA32+31)-removalnet(CelebA32+31,1.0,0.2,1.0,20,l3)-",
-            "train(densenet121,CelebA32+31)-removalnet(CelebA32+31,1.0,0.2,1.0,20,l3)-",
-            "train(vgg16_bn,CelebA32+31)-removalnet(CelebA32+31,1.0,0.2,1.0,20,l3)-",
-            "train(vgg19_bn,CelebA32+31)-removalnet(CelebA32+31,1.0,0.2,1.0,20,l3)-",
-            "train(mobilenet_v2,CelebA32+31)-removalnet(CelebA32+31,1.0,0.2,1.0,20,l3)-"
-        ],
-        "ImageNet": []
-    }
-    params_dict = {
-        "CIFAR10": [[0.1]]
-    }
 
-    task_list = task_dict[args.dataset]
+
+    task_list = comm.task_dict[args.dataset]
 
     for model2 in task_list:
         # step1: join data & normalize
@@ -127,7 +102,8 @@ def main():
                                       defense_method="ModelDiff")
 
         # IPGuard
-        tag = f"{dataset}_{arch}_tLk{args.k}"
+        k = comm.params_dict[args.dataset][arch][0]
+        tag = f"{dataset}_{arch}_tLk{k}"
         pth1 = osp.join(args.out_root, f"IPGuard/exp/exp11_{tag}.pt")
         results_dj = torch.load(pth1)
         pth2 = osp.join(args.out_root, f"IPGuard/exp/exp11_{tag}_r{model2}.pt")

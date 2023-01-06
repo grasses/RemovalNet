@@ -86,6 +86,7 @@ def plot_accuracy_dist_curve(atk_data, neg_data, steps, legends, path, fontsize=
         markers = markers[2:]
         markers_neg = "X"
 
+
     for idx, (metric, data) in enumerate(atk_data.items()):
         plt.plot(data[:, 0], data[:, 1], linewidth=linewidth, linestyle='-', markersize=markersize, marker=markers[idx], c=colors[idx])
         # plot step info
@@ -98,9 +99,11 @@ def plot_accuracy_dist_curve(atk_data, neg_data, steps, legends, path, fontsize=
         plt.scatter(data[:, 0], data[:, 1], s=markersize**2, marker=markers_neg, c=colors[idx])
 
     #plt.legend(labels=legends, loc='best', fontsize=fontsize)
-    #plt.xlim((80, 101))
+    plt.xlim((0, 101))
     plt.ylim((0, 1.01))
-    plt.xticks(np.arange(80, 100, 5))
+    #plt.xticks(np.arange(80, 100, 5))
+    if "CINIC10" in path:
+        plt.xticks(np.arange(0, 100, 5))
     plt.xticks(fontsize=fontsize)
     plt.yticks(fontsize=fontsize)
     plt.xlabel("Accuracy (%)", fontsize=fontsize)

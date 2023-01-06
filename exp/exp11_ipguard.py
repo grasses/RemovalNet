@@ -106,7 +106,7 @@ def exp11_eval_removalnet(args, metrics, steps):
     )
     model1 = benchmk.load_wrapper(args.model1, seed=1000).load_torch_model()
     model2 = benchmk.load_wrapper(args.model2, seed=args.seed).load_torch_model()
-    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=args.test_size)
+    test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", shuffle=True, batch_size=args.test_size)
     ipguard = IPGuard(model1, model2, test_loader=test_loader, device=args.device, out_root=args.proj_root,
                       k=args.k, targeted=args.targeted, test_size=args.test_size, seed=args.seed)
     fingerprint = ipguard.extract()
@@ -138,7 +138,7 @@ def exp11_eval_removalnet(args, metrics, steps):
 def main(args):
     print(f"-> Running with config:{args}")
     metrics = ["MR"]
-    methods = ["distill", "finetune", "prune", "negative", "steal"]
+    methods = ["distill", "finetune", "prune", "negative"]
 
     # eval baseline
     tag, results = exp11_eval(args, methods)

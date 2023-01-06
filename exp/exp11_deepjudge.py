@@ -160,7 +160,7 @@ def main():
     print(f"-> Running with config:{args}")
 
     metrics = ["LOD", "LAD"]
-    methods = ["distill", "finetune", "prune", "negative", "steal"]
+    methods = ["distill", "finetune", "prune", "negative"]
 
     # eval baseline
     tag, results = exp11_eval(args, methods)

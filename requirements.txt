@@ -3,6 +3,7 @@ tqdm==4.59.0
 torch-summary==1.4.5
 lime==0.2.0.1
 torchcam==0.3.2
+imblearn==0.0
 wget==3.2
 torchmetrics==0.10.1
 

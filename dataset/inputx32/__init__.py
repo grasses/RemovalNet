@@ -1,4 +1,8 @@
 from .config import load_cfg as cfg
-from .cifar10 import CIFAR10
-from .cinic10 import CINIC10
-from .celeba import CelebA32
+from .CIFAR10 import CIFAR10
+from .CINIC10 import CINIC10
+from .CelebA import CelebA32
+from .LFW import LFW as LFW32
+from .SkinCancer import SkinCancer
+from .BCN20000 import BCN20000
+from .HAM10000 import HAM10000

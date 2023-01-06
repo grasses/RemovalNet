@@ -294,13 +294,13 @@ class ModelWrapper:
             self.save_torch_model(student_model, seed=seed)
 
         elif method == 'distill':
-            cfg.feat_lmda = 1
+            cfg.feat_lmda = 0.5
             cfg.network = self.arch_id
             cfg.weight_decay = 5e-3
             cfg.momentum = 0.9
-            cfg.lr = 5e-3
+            cfg.lr = 1e-3
             cfg.reinit = False
-            cfg.retrain_linear = float(params[0])
+            cfg.retrain_linear = 0.5 #float(params[0])
             student_model = mloader.load_model(
                 dataset_id=self.dataset_id,
                 arch_id=self.arch_id,
@@ -326,8 +326,8 @@ class ModelWrapper:
             )
             cfg.network = arch_id
             cfg.steal = True
-            cfg.reinit = True
-            cfg.lr = 1e-2
+            #cfg.reinit = True
+            cfg.retrain_linear = 1.0
             cfg.steal_alpha = 0.5
             cfg.temperature = 1.0
             cfg.weight_decay = 5e-3
@@ -484,8 +484,8 @@ class ModelWrapper:
 class ImageBenchmark:
     def __init__(self, datasets, archs, datasets_dir='dataset/data', models_dir='model/ckpt'):
         self.logger = logging.getLogger('ImageBench')
-        self.datasets = datasets
         self.archs = [archs] if type(archs) == str else archs
+        self.datasets = [datasets] if type(datasets) == str else datasets
         self.datasets_dir = datasets_dir
         self.models_dir = models_dir
 
@@ -569,7 +569,7 @@ class ImageBenchmark:
             elif gen_type == "negative":
                 target_model = target_model.negative(params[0], seed=seed, **kwargs)
             elif gen_type == "removalnet":
-                target_model = target_model.removalnet(dataset_id=params[0], rate=round(float(params[1]), 1), alpha=params[2], beta=params[3], T=params[4], ydist=params[5], seed=seed, **kwargs)
+                target_model = target_model.removalnet(dataset_id=params[0], rate=round(float(params[1]), 1), alpha=params[2], beta=params[3], T=params[4], layer=params[5], seed=seed, **kwargs)
             else:
                 raise NotImplementedError(f"-> [ERROR] method:{gen_type} not found!")
         self.logger.info(f"-> load model: {target_model}")
@@ -664,12 +664,16 @@ def get_args():
     args.out_root = osp.join(helper.ROOT, "output")
     args.logs_root = osp.join(helper.ROOT, "logs")
     args.archs = {
-        "CINIC10": ["vgg19_bn"],
+        "SkinCancer": ["resnet50"],
+        "HAM10000": ["resnet50"],
+        "CINIC10": ["densenet121"],
         "CIFAR10": ["resnet50"],
-        "ImageNet": ["mobilenet_v2"] #["resnet50", "mobilenet_v2", "vgg16_bn", "vgg19_bn", "densenet121"]
+        "ImageNet": ["resnet50"] #["resnet50", "mobilenet_v2", "vgg16_bn", "vgg19_bn", "densenet121"]
     }
+    arch_celeba = ["densenet121"]
     for attr_idx in range(40):
-        args.archs[f"CelebA+{attr_idx}"] = ["resnet50", "mobilenet_v2", "vgg16_bn", "vgg19_bn", "densenet121"]
+        args.archs[f"CelebA32+{attr_idx}"] = arch_celeba
+        args.archs[f"CelebA+{attr_idx}"] = arch_celeba
         """
         done: resnet50 mobilenet_v2 densenet121
         """
@@ -696,17 +700,19 @@ def gen_model():
     )
 
     seeds = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
-    seeds += [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
+    #seeds += [1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000]
     seeds1 = [100, 200, 300, 400, 500]
     seeds2 = [600, 700, 800, 900, 1000]
     seeds3 = [1100, 1200, 1300, 1400, 1500]
     seeds4 = [1600, 1700, 1800, 1900, 2000]
     # seeds = seeds2
-    models = benchmk.list_models(cfg=cfg, methods=["distill"], seeds=seeds)
+    models = benchmk.list_models(cfg=cfg, methods=["negative", "finetune", "prune", "distill", "steal"], seeds=seeds)
     for idx, model in enumerate(models):
         logger.info(f"-> idx:{idx} runing for model:{model} seed:{model.seed}")
         model.gen_model(seed=model.seed)
         print()
+        cfg.lr = 3e-3
+
 
 
 if __name__ == "__main__":

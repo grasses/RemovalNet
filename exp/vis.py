@@ -32,7 +32,7 @@ def rename_labels(labels):
             ratio = name.split(",")[-1].split(")")[0]
             labels[idx] = f"FT({ratio})"
         if "removal" in name:
-            labels[idx] = "Removal"
+            labels[idx] = "RemovalNet"
         if "DDM" in name:
             labels[idx] = labels[idx].replace("DDM", "DDV")
     return labels
@@ -80,21 +80,32 @@ def plot_boxplot(data, xticklabels, fpath=None, fontsize=20):
 
 
 
-def boxplot_distance(dists, metrics, xticks, ylabel, fpath, fontsize=28):
+def boxplot_distance(dists, metrics, xticks, ylabel, fpath, fontsize=32):
     off_x = 0
     bplots, legends = [], []
     figure, ax = plt.subplots(figsize=(20, 10), dpi=160)
     ax.yaxis.grid(True)
+
+
+    gap = 0.4
+    m = list(metrics)[0]
+    if "IPGuard" in m or "ModelDiff" in m:
+        gap = 0.2
+
     for idx, metric in enumerate(metrics):
         item = dists[idx].tolist()
-        bplot = ax.boxplot(item, widths=0.12, showfliers=False, patch_artist=True, positions=np.arange(len(item)) - 0.4 + off_x)
+        bplot = ax.boxplot(item, widths=0.15, showfliers=False, patch_artist=True,
+                           boxprops=dict(linestyle='-', linewidth=1.3, color='black'),
+                           medianprops=dict(linestyle='-.', linewidth=1.5, color='black'),
+                           positions=np.arange(len(item)) - gap + off_x)
         legends.append(metric)
         bplots.append(bplot["boxes"][0])
+
         off_x += 0.2
         for patch in bplot["boxes"]:
             patch.set_facecolor(colors[idx])
     legends = rename_labels(legends)
-    ax.legend(bplots, legends, loc='best', fontsize=fontsize-5)
+    ax.legend(bplots, legends, loc='best', fontsize=fontsize)
     plt.setp(ax, xticks=np.arange(len(item)), xticklabels=rename_labels(xticks))
     plt.xticks(fontsize=fontsize - 8)
     plt.yticks(fontsize=fontsize - 8)

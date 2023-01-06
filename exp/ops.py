@@ -37,7 +37,16 @@ def exp11_normalize(results, methods, metrics, defense_method, model_size=10):
         print(metric, np.array(dists_nz[i] * 100, dtype=np.int32))
         #print(metric, np.array(dists_nz[i] * 100, dtype=np.int32))
 
-
+    print("-------------> Normalized data")
+    for j, model in enumerate(target_models):
+        print(f"-> Task:{model}")
+        for i, metric in enumerate(metrics):
+            min_x = round(float(np.min(dists_nz[i, j])), 4)
+            max_x = round(float(np.max(dists_nz[i, j])), 4)
+            med_x = round(float(np.median(dists_nz[i, j])), 4)
+            mean_x = round(float(np.mean(dists_nz[i, j])), 4)
+            std_x = round(float(np.std(dists_nz[i, j])), 4)
+            print(f"-> metric: {metric} med:{med_x}±{round((max_x - min_x) / 2.0, 4)} mean,std=({mean_x},{std_x})")
 
     print("-------------> Raw data")
     for j, model in enumerate(target_models):
@@ -49,20 +58,6 @@ def exp11_normalize(results, methods, metrics, defense_method, model_size=10):
             mean_x = round(float(np.mean(dists[i, j])), 4)
             std_x = round(float(np.std(dists[i, j])), 4)
             print(f"-> metric: {metric} med:{med_x}±{round((max_x-min_x)/2.0, 4)} mean,std=({mean_x},{std_x})")
-        print()
-
-    print("-------------> Normalized data")
-    for j, model in enumerate(target_models):
-        print(f"-> Task:{model}")
-        for i, metric in enumerate(metrics):
-            min_x = round(float(np.min(dists_nz[i, j])), 4)
-            max_x = round(float(np.max(dists_nz[i, j])), 4)
-            med_x = round(float(np.median(dists_nz[i, j])), 4)
-            mean_x = round(float(np.mean(dists_nz[i, j])), 4)
-            std_x = round(float(np.std(dists_nz[i, j])), 4)
-            print(f"-> metric: {metric} med:{med_x}±{round((max_x-min_x)/2.0, 4)} mean,std=({mean_x},{std_x})")
-        print()
-
     print(f"-> min:{min_v}, max:{max_v}")
 
     legends = [f"{defense_method}-{metric}" for metric in metrics]
