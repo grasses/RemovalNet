@@ -12,7 +12,8 @@ task_dict = {
         "train(densenet121,CINIC10)-removalnet(CINIC10,1.0,0.2,1.0,20,l3)-",
         "train(vgg16_bn,CINIC10)-removalnet(CINIC10,1.0,0.2,1.0,20,l3)-",
         "train(vgg19_bn,CINIC10)-removalnet(CINIC10,1.0,0.2,1.0,20,l3)-",
-        "train(mobilenet_v2,CINIC10)-removalnet(CINIC10,1.0,0.2,1.0,20,l3)-"
+        "train(mobilenet_v2,CINIC10)-removalnet(CINIC10,1.0,0.2,2.0,20,l2)-",
+        #"train(mobilenet_v2,CINIC10)-removalnet(CINIC10,1.0,0.2,1.0,20,l3)-"
     ],
     "CelebA32+20": [
         #"train(resnet50,CelebA32+20)-removalnet(CelebA32+20,1.0,0.5,1.0,20,l3)-",

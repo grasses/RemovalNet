@@ -19,12 +19,84 @@ sys_args = helper.get_args()
 colors = list(plt.rcParams['axes.prop_cycle'].by_key()['color'])
 
 #["blue", "red", "black", "violet", "orange"]
-markers = ["o", "v", "s", "^", "d", "*", "D", "+", "k", "X"]
+markers = ["o", "v", "s", "^", "d", "*", "D", "p", "+", "X"]
 fontdict = {'family': 'serif',
         'color':  'black',
         'weight': 'bold',
         'size': 30,
 }
+
+
+def plot_exp31_subset_variance_accuracy(target_acc, model1_acc, model2_acc, legends, xticks, path, fontsize=30, linewidth=6, markersize=20):
+    plt.figure(figsize=(18, 10), dpi=200)
+    plt.cla()
+    plt.grid()
+
+    plt.text(0.03, target_acc - 5, f"Target Model:{round(float(target_acc), 2)}%", fontdict=fontdict, color="black")
+    plt.hlines(target_acc, xmin=xticks[0], xmax=xticks[-1], linewidth=5, colors="gray", linestyles="dashed", label=legends[0])
+
+    lower = [np.min(model1_acc[idx]) for idx in range(model1_acc.shape[0])]
+    upper = [np.max(model1_acc[idx]) for idx in range(model1_acc.shape[0])]
+    mean = [np.mean(model1_acc[idx]) for idx in range(model1_acc.shape[0])]
+    plt.fill_between(xticks, lower, upper, color=colors[0], alpha=0.3)
+    plt.plot(xticks, mean, linewidth=linewidth, linestyle='-', markersize=markersize, marker=markers[0], c=colors[0], label=legends[1])
+
+    lower = [np.min(model2_acc[idx]) for idx in range(model2_acc.shape[0])]
+    upper = [np.max(model2_acc[idx]) for idx in range(model2_acc.shape[0])]
+    mean = [np.mean(model2_acc[idx]) for idx in range(model2_acc.shape[0])]
+    plt.fill_between(xticks, lower, upper, color=colors[1], alpha=0.3)
+    plt.plot(xticks, mean, linewidth=linewidth, linestyle='-', markersize=markersize, marker=markers[1], c=colors[1], label=legends[2])
+
+    plt.xticks(xticks, fontsize=fontsize)
+    plt.yticks(np.arange(0, 101, 20).tolist(), fontsize=fontsize)
+    plt.xlabel("Data holding rate", fontsize=fontsize)
+    plt.ylabel("Accuracy (%)", fontsize=fontsize)
+    plt.legend(loc="lower right", numpoints=1, fontsize=fontsize-10)
+    plt.savefig(path)
+    print(f"-> saving fig: {path}")
+
+
+def plot_exp31_subset_variance_distance(model1_results, model2_results, legends, xticks, path, fontsize=30, linewidth=6, markersize=20):
+    plt.figure(figsize=(18, 10), dpi=200)
+    plt.cla()
+    plt.grid()
+
+    cnt = 0
+    distance_flag = False
+    metrics = list(model1_results.keys())
+    for idx, metric in enumerate(metrics):
+        lower = [np.min(model1_results[metric][idx]) for idx in range(len(xticks))]
+        upper = [np.max(model1_results[metric][idx]) for idx in range(len(xticks))]
+        mean = [np.mean(model1_results[metric][idx]) for idx in range(len(xticks))]
+        plt.fill_between(xticks, lower, upper, color=colors[cnt], alpha=0.3)
+        plt.plot(xticks, mean, linewidth=linewidth, linestyle='-', markersize=markersize, marker=markers[cnt],
+                 c=colors[cnt], label=f"{legends[0]}: {metric}")
+        cnt += 1
+        if "DeepJudge" in metric:
+            distance_flag = True
+
+    for idx, metric in enumerate(metrics):
+        lower = [np.min(model2_results[metric][idx]) for idx in range(len(xticks))]
+        upper = [np.max(model2_results[metric][idx]) for idx in range(len(xticks))]
+        mean = [np.mean(model2_results[metric][idx]) for idx in range(len(xticks))]
+        plt.fill_between(xticks, lower, upper, color=colors[cnt], alpha=0.3)
+        plt.plot(xticks, mean, linewidth=linewidth, linestyle='-', markersize=markersize, marker=markers[cnt],
+                 c=colors[cnt], label=f"{legends[1]}: {metric}")
+        cnt += 1
+
+    plt.xticks(xticks, fontsize=fontsize)
+    plt.yticks(np.arange(0, 1.01, 0.2).tolist(), fontsize=fontsize)
+    plt.xlabel("Data holding rate", fontsize=fontsize)
+    if distance_flag:
+        plt.ylabel("Distance (normalized)", fontsize=fontsize)
+        plt.legend(loc="lower right", numpoints=1, fontsize=fontsize - 10)
+    else:
+        plt.ylabel("Similarity (normalized)", fontsize=fontsize)
+        plt.legend(loc="upper right", numpoints=1, fontsize=fontsize-10)
+    plt.savefig(path)
+    print(f"-> saving fig: {path}")
+
+
 
 
 
@@ -72,42 +144,56 @@ def pixel_plot(data, ax, fontsize=18, hide_labels=False):
     return pc
 
 
-def plot_accuracy_dist_curve(atk_data, neg_data, steps, legends, path, fontsize=25, linewidth=5, markersize=25):
-    plt.figure(figsize=(12, 12), dpi=200)
+def plot_accuracy_dist_curve(atk_data, neg_data, steps, legends, path, fontsize=25, linewidth=8, markersize=30):
+    plt.figure(figsize=(16, 12), dpi=160)
     plt.cla()
     plt.grid()
     global markers
-    size = len(legends)
-    num_steps = len(steps)
     fontdict["size"] = fontsize
+
+    # configure for datasets
+    conf = {
+        "CIFAR10": {
+            "yticks": np.arange(40, 101, 10).tolist(),
+            "acc_y_offset": 5,
+        },
+        "CelebA": {
+            "yticks": np.arange(80, 101, 5).tolist(),
+            "acc_y_offset": 1,
+        },
+        "HAM10000": {
+            "yticks": np.arange(50, 101, 10).tolist(),
+            "acc_y_offset": 1,
+        }
+    }
+    conf = conf["HAM10000"]
+
 
     markers_neg = "P"
     if "ZEST" in legends[0]:
         markers = markers[2:]
         markers_neg = "X"
 
-
+    # plot RemovalNet curve
     for idx, (metric, data) in enumerate(atk_data.items()):
-        plt.plot(data[:, 0], data[:, 1], linewidth=linewidth, linestyle='-', markersize=markersize, marker=markers[idx], c=colors[idx])
-        # plot step info
-        #plt.text(data[0, 0] + 5, data[0, 1] + 0.05, f"t=0", fontdict=fontdict)
-        #plt.text(data[4, 0] + 5, data[4, 1] + 0.05, f"t={steps[4]}", fontdict=fontdict)
-        #plt.text(data[-1, 0] + 5, data[-1, 1] + 0.05, f"t={steps[-1]}", fontdict=fontdict, color="black")
+        plt.plot(data[:, 1], data[:, 0], linewidth=linewidth, linestyle='-', markersize=markersize, marker=markers[idx], c=colors[idx])
 
+    # plot accuracy of target model
+    fontdict["size"] = 50
+    target_acc = round(float(data[0, 0]), 2)
+    plt.text(0.03, target_acc + conf["acc_y_offset"], f"Acc:{target_acc}%", fontdict=fontdict, color="black")
+    plt.hlines(target_acc, xmin=0, xmax=1.0, linewidth=5, colors="gray", linestyles="dashed")
+
+    # scatter negative points
     for idx, (metric, data) in enumerate(neg_data.items()):
         legends += [f"{legends[idx]}(negative)"]
-        plt.scatter(data[:, 0], data[:, 1], s=markersize**2, marker=markers_neg, c=colors[idx])
+        plt.scatter(data[:, 1], data[:, 0], s=markersize**2, marker=markers_neg, c=colors[idx])
 
     #plt.legend(labels=legends, loc='best', fontsize=fontsize)
-    plt.xlim((0, 101))
-    plt.ylim((0, 1.01))
-    #plt.xticks(np.arange(80, 100, 5))
-    if "CINIC10" in path:
-        plt.xticks(np.arange(0, 100, 5))
-    plt.xticks(fontsize=fontsize)
-    plt.yticks(fontsize=fontsize)
-    plt.xlabel("Accuracy (%)", fontsize=fontsize)
-    plt.ylabel("Distance", fontsize=fontsize)
+    plt.xticks(np.arange(0, 1.01, 0.2).tolist(), fontsize=fontsize)
+    plt.yticks(conf["yticks"], fontsize=fontsize)
+    plt.xlabel("Distance", fontsize=fontsize)
+    plt.ylabel("Accuracy (%)", fontsize=fontsize)
     plt.savefig(path)
     print(f"-> saving fig: {path}")
 

@@ -30,13 +30,14 @@ out_root = osp.join(ROOT, "output")
 
 class DeepJudge(Fingerprinting):
     def __init__(self, model1, model2, test_loader, device, out_root,
-                 blackbox=False, seed_method="PGD", layer_index=4, alpha=1e-3,
-                 test_size=1000, batch_size=200, DIGISTS=4, seed=1000):
+                 blackbox=False, seed_method="PGD", layer_index=4, m=3,
+                 test_size=1000, batch_size=200, DIGISTS=4, seed=1000,):
         super().__init__(model1, model2, device=device, out_root=out_root)
         assert seed_method in ["FGSM", "PGD", "CW", "Random", "IPGuard"]
         self.metrics = ["ROB", "JSD", "LOD", "LAD", "NOD", "NAD", "MR"]
         if blackbox:
             self.metrics = ["ROB", "JSD", "MR"]
+        self.m = round(float(m), 1)
         self.DIGISTS = DIGISTS
         self.layer_index = layer_index
         self.batch_size = batch_size
@@ -72,7 +73,7 @@ class DeepJudge(Fingerprinting):
 
         # step2: generate test samples
         test_x, test_y = Bseed.generate(seed_x=seed_x, seed_y=seed_y, method=self.seed_method)
-        tests = Wseed.generate(seed_x=seed_x, seed_y=seed_y, layer_index=self.layer_index)
+        tests = Wseed.generate(seed_x=seed_x, seed_y=seed_y, layer_index=self.layer_index, m=self.m)
         min_size = min([len(v) for v in tests.values()])
         for k, v in tests.items():
             tests[k] = v[:min_size]

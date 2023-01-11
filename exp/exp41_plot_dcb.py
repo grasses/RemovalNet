@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import KNeighborsClassifier
 ops.set_default_seed(100)
 
+# Ablation Study: Visualization of the decision boundary.
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="Build micro benchmark.")
@@ -42,7 +44,7 @@ ops.set_default_seed(args.seed)
 
 
 
-def scatter_points(data_dict, label, file_path, num_classes, lims=100, fontsize=28):
+def scatter_points(data_dict, label, file_path, num_classes, lims=100, fontsize=40):
     plt.figure(figsize=(16, 16), dpi=160)
     plt.cla()
     keys = list(data_dict.keys())
@@ -50,13 +52,13 @@ def scatter_points(data_dict, label, file_path, num_classes, lims=100, fontsize=
     d1 = data_dict[keys[0]]
     d2 = data_dict[keys[1]]
     d = np.concatenate([d1, d2])
-    xx, yy = np.meshgrid(np.arange(-100, 100, 1), np.arange(-100, 100, 1))
+    xx, yy = np.meshgrid(np.arange(-lims, lims, 1), np.arange(-lims, lims, 1))
     knn = KNeighborsClassifier(n_neighbors=num_classes).fit(d, label)
     zz = knn.predict(np.c_[xx.ravel(), yy.ravel()])
     zz = np.reshape(zz, xx.shape)
     plt.pcolormesh(xx, yy, zz, cmap=plt.get_cmap('Greys'), vmin=0, vmax=num_classes-1, alpha=0.1)
     for idx, (key, value) in enumerate(data_dict.items()):
-        plt.scatter(value[:, 0], value[:, 1], lw=6, s=60, label=key, marker=vis.markers[idx], alpha=0.7)
+        plt.scatter(value[:, 0], value[:, 1], lw=8, s=200, label=key, marker=vis.markers[idx], alpha=0.7)
 
     xy = data_dict["model_T"]
     for l in range(num_classes):
@@ -67,13 +69,13 @@ def scatter_points(data_dict, label, file_path, num_classes, lims=100, fontsize=
             'family': 'serif',
             'color':  'black',
             'weight': 'bold',
-            'size': 35,
+            'size': fontsize,
         })
     plt.xlim(-lims, lims)
     plt.ylim(-lims, lims)
     plt.xticks([])
     plt.yticks([])
-    plt.legend(loc="upper right", numpoints=2, fontsize=fontsize)
+    plt.legend(loc="best", numpoints=2, fontsize=30, prop={'size': 40})
     plt.savefig(file_path)
     print(f"-> saving fig: {file_path}")
 
@@ -157,8 +159,8 @@ def main():
             "model_T": xy[0: num_sample],
             f"model_S(t={t})": xy[off: off + num_sample],
         }
-        fig_path = osp.join(helper.ROOT, f"output/exp/exp32_dcb_{args.model1}_t{t}.step")
-        scatter_points(data, label=label_TS, file_path=f"{fig_path}_t{t}.pdf", num_classes=test_loader.num_classes, lims=100)
+        fig_path = osp.join(helper.ROOT, f"output/pdf/exp32_dcb_{args.model1}_t{t}.step")
+        scatter_points(data, label=label_TS, file_path=f"{fig_path}_t{t}.pdf", num_classes=test_loader.num_classes, lims=90)
 
 
 

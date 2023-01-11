@@ -50,16 +50,20 @@ def get_args():
     return args
 
 
-def join_data():
-    pass
+def purify_result(results):
+    keys = []
+    for k in results.keys():
+        if "0.2" in k and ("prune" in k or "fine" in k):
+            keys.append(k)
+    for k in keys:
+        del results[k]
+    return results
 
 
 def main():
     args = get_args()
-    methods = ["distill", "finetune", "prune", "negative", "steal"]
+    methods = ["distill", "finetune", "prune", "negative"]
     metrics = ["LOD", "LAD", "L2", "cosine"]
-
-
     task_list = comm.task_dict[args.dataset]
 
     for model2 in task_list:
@@ -73,7 +77,7 @@ def main():
         pth2 = osp.join(args.out_root, f"DeepJudge/exp/exp11_{tag}_r{model2}.pt")
         results = torch.load(pth2)
         results.update(results_dj)
-        data_dj = ops.exp11_normalize(results, methods=["removalnet"] + methods, metrics=["LOD", "LAD"], defense_method="DeepJudge")
+        data_dj = ops.exp11_normalize(purify_result(results), methods=["removalnet"] + methods, metrics=["LOD", "LAD"], defense_method="DeepJudge")
 
         # ZEST
         pth1 = osp.join(args.out_root, f"ZEST/exp/exp11_{dataset}_{arch}.pt")
@@ -81,13 +85,13 @@ def main():
         pth2 = osp.join(args.out_root, f"ZEST/exp/exp11_{dataset}_{arch}_r{model2}.pt")
         results = torch.load(pth2)
         results.update(results_zest)
-        data_zest = ops.exp11_normalize(results, methods=["removalnet"] + methods, metrics=["L2", "cosine"], defense_method="ZEST")
+        data_zest = ops.exp11_normalize(purify_result(results), methods=["removalnet"] + methods, metrics=["L2", "cosine"], defense_method="ZEST")
 
         # step2: plot
         # data[dists_nz] = [metics, models, 10]
         dists_nz = np.concatenate([data_dj["dists_nz"], data_zest["dists_nz"]])
         legends = data_dj["legends"] + data_zest["legends"]
-        fpath = osp.join(args.out_root, f"exp/exp12_distance_{dataset}_{arch}_r{model2}.pdf")
+        fpath = osp.join(args.out_root, f"pdf/exp12_distance_{dataset}_{arch}_r{model2}.pdf")
         vis.boxplot_distance(dists_nz, metrics=legends, xticks=data_dj["xticks"],
                              ylabel=data_dj["ylabel"], fpath=fpath)
 
@@ -98,8 +102,7 @@ def main():
         pth2 = osp.join(args.out_root, f"ModelDiff/exp/exp11_{tag}_r{model2}.pt")
         results = torch.load(pth2)
         results.update(results_dj)
-        data_diff = ops.exp11_normalize(results, methods=["removalnet"] + methods, metrics=["DDM"],
-                                      defense_method="ModelDiff")
+        data_diff = ops.exp11_normalize(purify_result(results), methods=["removalnet"] + methods, metrics=["DDM"], defense_method="ModelDiff")
 
         # IPGuard
         k = comm.params_dict[args.dataset][arch][0]
@@ -109,12 +112,11 @@ def main():
         pth2 = osp.join(args.out_root, f"IPGuard/exp/exp11_{tag}_r{model2}.pt")
         results = torch.load(pth2)
         results.update(results_dj)
-        data_ipguard = ops.exp11_normalize(results, methods=["removalnet"] + methods, metrics=["MR"],
-                                        defense_method="IPGuard")
+        data_ipguard = ops.exp11_normalize(purify_result(results), methods=["removalnet"] + methods, metrics=["MR"], defense_method="IPGuard")
 
         dists_nz = np.concatenate([data_diff["dists_nz"], data_ipguard["dists_nz"]])
         legends = data_diff["legends"] + data_ipguard["legends"]
-        fpath = osp.join(args.out_root, f"exp/exp12_similarity_{dataset}_{arch}_r{model2}.pdf")
+        fpath = osp.join(args.out_root, f"pdf/exp12_similarity_{dataset}_{arch}_r{model2}.pdf")
         vis.boxplot_distance(dists_nz, metrics=legends, xticks=data_diff["xticks"],
                              ylabel=data_dj["ylabel"], fpath=fpath)
 

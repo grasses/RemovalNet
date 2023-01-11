@@ -35,8 +35,11 @@ def get_args():
     parser.add_argument("-tag", required=False, type=str, help="tag of script.")
     parser.add_argument("-seed_method", action="store", default="PGD", type=str, choices=["FGSM", "PGD", "CW"],
                         help="Type of blackbox generation")
-    parser.add_argument("-layer_index", action="store", default=5, type=int, choices=[1, 2, 3, 4, 5], help="Layer Index")
+    parser.add_argument("-djm", required=False, type=float, default=3, help="m of DeepJudge")
+    parser.add_argument("-layer_index", action="store", default=2, type=int, choices=[1, 2, 3, 4, 5], help="Layer Index")
+    parser.add_argument("-test_size", required=False, type=int, default=400, help="test size of DeepJudge")
     parser.add_argument("-batch_size", required=False, type=int, default=200, help="tag of script.")
+
     parser.add_argument("-dataset", required=False, type=str, default="CIFAR10", help="Dataset for testing")
     parser.add_argument("-arch", required=True, type=str, help="Model archtecture",
                         choices=["resnet50", "densenet121", "mobilenet_v2", "vgg16_bn", "vgg19_bn"])
@@ -54,12 +57,13 @@ def get_args():
     for path in [args.datasets_dir, args.models_dir, args.out_root, args.logs_root]:
         if not osp.exists(path):
             os.makedirs(path)
+    args.djm = round(float(args.djm), 1)
     return args
 
 
 def exp11_eval(args, methods, debug=False):
     result = {}
-    tag = f"{args.dataset}_{args.arch}_L{args.layer_index}"
+    tag = f"{args.dataset}_{args.arch}_L{args.layer_index}_m{args.djm}"
     path = osp.join(args.proj_root, f"exp/exp11_{tag}.pt")
     if debug or not osp.exists(path):
         cfg = dloader.load_cfg(dataset_id=args.dataset, arch_id=args.arch)
@@ -73,7 +77,7 @@ def exp11_eval(args, methods, debug=False):
             print(f"-> idx:{idx} runing for model:{model} seed:{model.seed}")
             if idx == 0:
                 model1 = model.torch_model(seed=1000)
-                test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", shuffle=False)
+                test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", shuffle=True)
 
             key = f"{model1.task}_{str(model)}"
             if key not in result.keys():
@@ -95,7 +99,9 @@ def exp11_eval(args, methods, debug=False):
             model2 = model.torch_model(seed=model.seed)
             deepjudge = DeepJudge(model1, model2, test_loader=test_loader,
                                   device=device, seed=args.seed, out_root=args.proj_root,
-                                  batch_size=args.batch_size, layer_index=args.layer_index, seed_method=args.seed_method)
+                                  batch_size=args.batch_size, test_size=args.test_size,
+                                  layer_index=args.layer_index, m=args.djm,
+                                  seed_method=args.seed_method)
             if fingerprint is None:
                 fingerprint = deepjudge.extract()
             deepjudge.model2 = model2
@@ -112,10 +118,10 @@ def exp11_eval(args, methods, debug=False):
     return tag, result
 
 
-def exp11_eval_removalnet(args, metrics, steps):
+def exp11_eval_removalnet(args, metrics, steps, tag):
     result = {}
     out_root = osp.join(args.out_root, "DeepJudge")
-    exp_path = osp.join(args.proj_root, f"exp/exp11_{args.dataset}_{args.arch}_L{args.layer_index}_r{args.model2}.pt")
+    exp_path = osp.join(args.proj_root, f"exp/exp11_{tag}_r{args.model2}.pt")
     if osp.exists(exp_path):
         return torch.load(exp_path, map_location="cpu")
 
@@ -128,8 +134,9 @@ def exp11_eval_removalnet(args, metrics, steps):
     test_loader = dloader.get_dataloader(dataset_id=args.dataset, split="test", batch_size=args.batch_size)
     deepjudge = DeepJudge(model1, model2, test_loader=test_loader,
                                       device=args.device, seed=args.seed, out_root=out_root,
-                                      batch_size=args.batch_size,
-                                      layer_index=args.layer_index, seed_method=args.seed_method)
+                                      batch_size=args.batch_size, test_size=args.test_size,
+                                      layer_index=args.layer_index,  m=args.djm,
+                                      seed_method=args.seed_method)
     fingerprint = deepjudge.extract()
 
     key = f"{model1.task}_{model2.task}"
@@ -160,16 +167,16 @@ def main():
     print(f"-> Running with config:{args}")
 
     metrics = ["LOD", "LAD"]
-    methods = ["distill", "finetune", "prune", "negative"]
+    methods = ["distill", "finetune", "prune", "negative", "steal"]
 
     # eval baseline
     tag, results = exp11_eval(args, methods)
-    fpath = osp.join(args.proj_root, f"pdf/exp11_{args.dataset}_{args.arch}_L{args.layer_index}_r{args.model2}.pdf")
+    fpath = osp.join(args.proj_root, f"pdf/exp11_{tag}_r{args.model2}.pdf")
 
     if args.removal:
         # eval removal attack
         steps = np.arange(800, 1000, 20)
-        r_results = exp11_eval_removalnet(args, metrics=metrics, steps=steps)
+        r_results = exp11_eval_removalnet(args, metrics=metrics, steps=steps, tag=tag)
         r_results.update(results)
         results = r_results
         methods = ["removalnet"] + methods

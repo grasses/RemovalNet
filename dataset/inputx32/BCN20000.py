@@ -14,6 +14,7 @@ import torch
 import numpy as np
 import os.path as osp
 from PIL import Image
+from tqdm import tqdm
 from typing import Any, Callable, Optional, Tuple
 from sklearn.model_selection import train_test_split
 from torchvision.datasets.vision import VisionDataset
@@ -41,18 +42,22 @@ class BCN20000(VisionDataset):
         self.num_classes = 7
         print(f"-> Load BCN20000 dataset from:{self.root}")
 
-        self.metadata = self._load_csv(filename="ISIC_2019_Training_GroundTruth.csv", header=1)
-        data_array = np.array(self.metadata.data).reshape([-1, 1])
-        labels_array = np.array(self.metadata.labels)
-        data, labels = RandomOverSampler(random_state=42).fit_resample(data_array, labels_array)
-        x_train, x_eval, y_train, y_eval = train_test_split(data, labels, train_size=0.8, random_state=42)
-
-        if split == "train":
-            self.data = x_train.reshape(-1).tolist()
-            self.labels = torch.from_numpy(y_train.reshape(-1)).long()
-        elif split == "test":
-            self.data = x_eval.reshape(-1).tolist()
-            self.labels = torch.from_numpy(y_eval.reshape(-1)).long()
+        path = osp.join(root, f"BCN20000_{split}.pt")
+        if osp.exists(path):
+            cache = torch.load(path)
+            self.data, self.labels = cache["x"], cache["y"]
+        else:
+            self.metadata = self._load_csv(filename="ISIC_2019_Training_GroundTruth.csv", header=1)
+            data_array = np.array(self.metadata.data).reshape([-1, 1])
+            labels_array = np.array(self.metadata.labels)
+            data, labels = RandomOverSampler(random_state=42).fit_resample(data_array, labels_array)
+            x_train, x_eval, y_train, y_eval = train_test_split(data, labels, train_size=0.8, random_state=42)
+            if split == "train":
+                self.data = x_train.reshape(-1).tolist()
+                self.labels = torch.from_numpy(y_train.reshape(-1)).long()
+            elif split == "test":
+                self.data = x_eval.reshape(-1).tolist()
+                self.labels = torch.from_numpy(y_eval.reshape(-1)).long()
 
     def _load_csv(
         self,
@@ -76,14 +81,17 @@ class BCN20000(VisionDataset):
         return CSV(headers, indices, data, labels)
 
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
-        path = osp.join(self.root, "images", self.data[index] + ".jpg")
-        x = Image.open(path)
-        y = self.labels[index]
-        if self.transform is not None:
-            x = self.transform(x)
-        if self.target_transform is not None:
-            y = self.target_transform(y)
-        return x, y
+        if type(self.data[index]) is str:
+            path = osp.join(self.root, "images", self.data[index] + ".jpg")
+            x = Image.open(path)
+            y = self.labels[index]
+            if self.transform is not None:
+                x = self.transform(x)
+            if self.target_transform is not None:
+                y = self.target_transform(y)
+            return x, y
+        else:
+            return self.data[index], self.labels[index]
 
     def __len__(self) -> int:
         return len(self.data)
@@ -101,15 +109,23 @@ if __name__ == "__main__":
         transforms.CenterCrop(32),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2471, 0.2435, 0.2616]),
     ])
-    dataset = BCN20000(root="../data/BCN20000", split="train", transform=transform)
+    split = "test"
+    dataset = BCN20000(root="../data/BCN20000", split=split, transform=transform)
     print(len(dataset))
 
-    data_loader = torch.utils.data.DataLoader(dataset, batch_size=100, shuffle=False, num_workers=4)
-    for x, y in data_loader:
-        print(x.shape, y)
-        exit(1)
+    data_loader = torch.utils.data.DataLoader(dataset, batch_size=1000, shuffle=False, num_workers=8)
+    phar = tqdm(data_loader)
+    batch_x, batch_y = [], []
+    for x, y in phar:
+        batch_x.append(x)
+        batch_y.append(y)
+    cache = {
+        "x": torch.cat(batch_x),
+        "y": torch.cat(batch_y)
+    }
+    torch.save(cache, osp.join(dataset.root, f"BCN20000_{split}.pt"))
 
 
 

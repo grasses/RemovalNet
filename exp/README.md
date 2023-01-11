@@ -16,3 +16,9 @@
   } 
 }
 ```
+
+## RemovalNet模型选择
+
+### exp2.1 accuracy vs dist
+
+CIFAR10: 

@@ -64,9 +64,6 @@ class ZEST(Fingerprinting):
 
             self.out1, lime_mask1 = self.compute_lime_signature(self.model1, ref_dataset, lime_dataset)
             self.out2, lime_mask2 = self.compute_lime_signature(self.model2, ref_dataset, lime_dataset)
-            print(
-                torch.norm(torch.from_numpy(self.out1) - torch.from_numpy(self.out2))
-            )
 
             fingerprint = {
                 "ref_data": ref_data,

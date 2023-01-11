@@ -43,10 +43,10 @@ def load_cfg(dataset_id):
     args.batch_size = 50
 
     if "ImageNet" in dataset_id:
-        args.lr = 1e-2
+        args.lr = 8e-3
         args.test_interval = 2000
         args.TRAIN_ITERS = 20000
-        args.NEGATIVE_ITERS = 20000
+        args.NEGATIVE_ITERS = 50000
         args.STEAL_ITERS = 20000
         args.DISTILL_ITERS = 500
         args.QUANTIZE_ITERS = 500

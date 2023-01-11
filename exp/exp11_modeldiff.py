@@ -92,7 +92,7 @@ def exp11_eval(args, methods, debug=False):
                 }
             model2 = model.torch_model(seed=model.seed)
             modeldiff = ModelDiff(model1, model2, test_loader=test_loader, device=device, out_root=args.proj_root, seed=model.seed, epsilon=float(args.epsilon))
-            dist = modeldiff.verify(modeldiff.extract())
+            dist = modeldiff.verify(modeldiff.extract(cache=True))
             for metric in dist.keys():
                 result[key][metric].append(dist[metric])
             print()

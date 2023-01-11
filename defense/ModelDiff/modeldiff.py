@@ -56,8 +56,11 @@ class ModelDiff(Fingerprinting):
         ])
         return seed_inputs
 
-    def extract(self):
-        if not osp.exists(self.fp_path):
+    def extract(self, cache=False):
+        if cache and osp.exists(self.fp_path):
+            self.logger.info(f'-> load fingerprint from:{self.fp_path}')
+            fingerprints = torch.load(self.fp_path, map_location="cpu")["fingerprints"]
+        else:
             seed_x, seed_y = next(iter(self.test_loader))
             seed_inputs = seed_x.to('cpu').numpy()
             np.random.shuffle(seed_inputs)
@@ -65,9 +68,6 @@ class ModelDiff(Fingerprinting):
             seed_inputs = torch.from_numpy(seed_inputs)
             fingerprints = self.gen_inputs(seed_inputs, epsilon=self.epsilon)
             torch.save({"fingerprints": fingerprints}, self.fp_path)
-        else:
-            self.logger.info(f'-> load fingerprint from:{self.fp_path}')
-            fingerprints = torch.load(self.fp_path, map_location="cpu")["fingerprints"]
         return fingerprints
 
     def verify(self, fingerprints, **kwargs):
@@ -331,7 +331,7 @@ class ModelDiff(Fingerprinting):
         for i in range(b):
             u1, s1, v1 = torch.svd(feature1[i])
             u2, s2, v2 = torch.svd(feature2[i])
-            st()
+            #st()
         dist = nn.CosineSimilarity(dim=0)(feature1, feature2).item()
         del module1.out, module2.out, feature1, feature2
         sim = dist

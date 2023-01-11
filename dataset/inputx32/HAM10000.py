@@ -4,9 +4,7 @@
 __author__ = 'homeway'
 __copyright__ = 'Copyright © 2023/01/06, homeway'
 
-# The BCN20000 is the substitute dataset of SkinCancer
-# We do not provide label of the dataset
-
+# The HAM10000 dataset
 
 import os
 import csv

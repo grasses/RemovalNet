@@ -27,7 +27,7 @@ class WhiteboxSeeding(BaseSeeding):
         layer_maxs = np.max(outputs, axis=0)
         return (times * layer_maxs)
 
-    def generate(self, seed_x, seed_y, layer_index=2, m=3, alpha=0.1, iters=1000, lr=0.1, target_idx=None):
+    def generate(self, seed_x, seed_y, layer_index, m, iters=1000, alpha=0.2, lr=0.1, target_idx=None):
         """
         args:
             seeds: seeds for the generation
@@ -42,7 +42,7 @@ class WhiteboxSeeding(BaseSeeding):
             a dictionary of generated test cases {(layer_index, neuron_index): [test cases...]}
         """
         self.logger.info(f"-> generate whitebox test samples... layer_index:{layer_index}")
-        data = self.load_test_samples(tag=f"whitebox-L{layer_index}")
+        data = self.load_test_samples(tag=f"whitebox-L{layer_index}_m{round(float(m), 1)}")
         if data is not None:
             return data["test_x"]
 
@@ -95,6 +95,6 @@ class WhiteboxSeeding(BaseSeeding):
         for k, v in tests.items():
             tests[k] = v[:min_size]
 
-        self.save_test_samples(seed_x=seed_x, seed_y=seed_y, test_x=tests, test_y=[], tag=f"whitebox-L{layer_index}")
+        self.save_test_samples(seed_x=seed_x, seed_y=seed_y, test_x=tests, test_y=[], tag=f"whitebox-L{layer_index}_m{round(float(m), 1)}")
         self.logger.info(f"-> generate whitebox test samples done! size:{len(tests)}")
         return tests

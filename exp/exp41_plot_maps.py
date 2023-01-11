@@ -63,7 +63,7 @@ def main():
     eval_x, eval_y, eval_ori_x = get_eval_batch(model=model_T, loader=test_loader, device=args.device)
 
     for l in np.arange(2, 4):
-        fig_path = osp.join("output/exp", f"LayerCam_{args.layers[l]}_t{args.t}")
+        fig_path = osp.join("output/pdf", f"LayerCam_{args.layers[l]}_t{args.t}")
         vis.view_layer_activation(model_T, model_S, x=eval_x.clone(), y=eval_y.clone(),
                                   ori_x=eval_ori_x.clone(),
                                   size=len(eval_x), target_layer=args.layers[l],

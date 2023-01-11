@@ -64,7 +64,7 @@ def get_args():
     parser.add_argument("-batch_size", required=False, type=int, default=100, help="tag of script.")
     parser.add_argument("-dataset", required=False, type=str, default="CIFAR10", help="model archtecture")
     parser.add_argument("-device", action="store", default=1, type=int, help="GPU device id")
-    parser.add_argument("-seed", default=1000, type=int, help="Default seed of numpy/pyTorch")
+    parser.add_argument("-seed", default=100, type=int, help="Default seed of numpy/pyTorch")
     args, unknown = parser.parse_known_args()
     args.ROOT = helper.ROOT
     args.namespace = helper.curr_time
@@ -154,7 +154,7 @@ def plot_embedding(xy, labels_cnt, fig_path, lims=120, fontsize=30):
     plt.ylim(-lims, lims)
     plt.xticks(fontsize=fontsize)
     plt.yticks(fontsize=fontsize)
-    plt.legend(loc="upper right", numpoints=1, fontsize=fontsize)
+    plt.legend(loc="upper right", numpoints=1, fontsize=50, prop={'size': 10})
     plt.savefig(fig_path)
     print(f"-> saving fig: {fig_path}")
 
