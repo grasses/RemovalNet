@@ -28,6 +28,7 @@ python -m attack.RemovalNet.removalnet -model1 "train(vgg19_bn,CIFAR10)-" -subse
 ```
 
 > Please note, put target model in path: model/ckpt/train(vgg19_bn,CIFAR10)-/final_ckpt_s1000.pth !!
+
 The pretrained target model can be downloaded from [Google Drive](https://drive.google.com/drive/folders/1rRZDmPUPrSLjCgqwsn9rJsKmLxGZFMWK?usp=drive_link)
 
 
