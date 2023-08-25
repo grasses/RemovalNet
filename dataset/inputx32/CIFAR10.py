@@ -61,8 +61,7 @@ class CIFAR10(VisionDataset):
     ) -> None:
         super().__init__(root, transform=transform, target_transform=target_transform)
         self.split = split
-        if download:
-            self.download()
+        self.download()
         self.num_classes = 10
 
         if not self._check_integrity():

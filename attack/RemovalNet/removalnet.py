@@ -448,9 +448,8 @@ if __name__ == "__main__":
     main()
     """
         Example command:
-        <===========================  Flower102-resnet18:20220901_Test  ===========================>
-        SCRIPT="attack.RemovalNet.removalnet"
-        python -m $SCRIPT -model1 "pretrain(resnet18,ImageNet)-transfer(Flower102,1)-" -model2 "" -device 2
+        <===========================  train(vgg19_bn,CIFAR10)-  ===========================>
+        python -m attack.RemovalNet.removalnet -model1 "train(vgg19_bn,CIFAR10)-" -subset CIFAR10 -subset_ratio 1.0 -layer 2 -batch_size 128 -device 0 -tag ''
     """
 
 
