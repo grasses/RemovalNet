@@ -27,8 +27,8 @@ Example command for model "train(vgg19_bn,CIFAR10)-":
 python -m attack.RemovalNet.removalnet -model1 "train(vgg19_bn,CIFAR10)-" -subset CIFAR10 -subset_ratio 1.0 -layer 2 -batch_size 128 -device 0 -tag ''
 ```
 
-Please note, put target model in path: model/ckpt/train(vgg19_bn,CIFAR10)-/final_ckpt_s1000.pth !!
-
+> Please note, put target model in path: model/ckpt/train(vgg19_bn,CIFAR10)-/final_ckpt_s1000.pth !!
+The pretrained target model can be downloaded from [Google Drive](https://drive.google.com/drive/folders/1rRZDmPUPrSLjCgqwsn9rJsKmLxGZFMWK?usp=drive_link)
 
 
 # Citation
