@@ -16,7 +16,7 @@ The removal process is conducted on the latent-level and logits-level
 
 
 <center>
-    <img style="margin: auto; width: 60%;" src="https://raw.githubusercontent.com/grasses/RemovalNet/master/figure/exp_vis_decision.png" alt="Decision boundary changes of the surrogate model on CIFAR10.">
+    <img style="width: 60%;" src="https://raw.githubusercontent.com/grasses/RemovalNet/master/figure/exp_vis_decision.png" alt="Decision boundary changes of the surrogate model on CIFAR10.">
 </center>
 
 
@@ -24,7 +24,7 @@ The removal process is conducted on the latent-level and logits-level
 ```text
 @article{yao2023removalnet,
   title={RemovalNet: DNN Fingerprint Removal Attacks},
-  author={Yao, Hongwei Li, Zheng and KunZhe, Huang and Lou, Jian and Qin, Zhan and Ren, Kui},
+  author={Yao, Hongwei Li, Zheng and Huang, KunZhe and Lou, Jian and Qin, Zhan and Ren, Kui},
   journal={arXiv preprint arXiv:2308.12319},
   year={2023}
 }
