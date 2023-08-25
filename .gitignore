@@ -1,0 +1,16 @@
+TRES.md
+.idea/
+__pycache__
+*.pyc
+output/
+.DS_Store
+data/
+deploy
+.pyc
+.swp
+.pt
+todo*
+TODO*
+*.swp
+log*
+output*
