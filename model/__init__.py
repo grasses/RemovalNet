@@ -1,0 +1,1 @@
+from .inputx32 import vgg

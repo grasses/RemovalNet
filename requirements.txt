@@ -1,0 +1,13 @@
+torchattacks==3.2.6
+tqdm==4.59.0
+torch-summary==1.4.5
+lime==0.2.0.1
+torchcam==0.3.2
+imblearn==0.0
+wget==3.2
+torchmetrics==0.10.1
+
+--find-links https://download.pytorch.org/whl/cu113/torch_stable.html
+torch==1.10.2+cu113
+torchvision==0.11.3+cu113
+torchaudio==0.10.2+cu113
