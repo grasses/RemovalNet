@@ -15,9 +15,9 @@ The removal process is conducted on the latent-level and logits-level
 </div>
 
 
-<div style="place-items: center;display: grid;">
+<center>
     <img style="display: block; margin: auto; width: 60%;" src="https://raw.githubusercontent.com/grasses/RemovalNet/master/figure/exp_vis_decision.png" alt="Decision boundary changes of the surrogate model on CIFAR10.">
-</div>
+</center>
 
 
 # Citation
