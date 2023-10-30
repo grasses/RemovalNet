@@ -36,9 +36,12 @@ The pretrained target model can be downloaded from [Google Drive](https://drive.
 ```text
 @article{yao2023removalnet,
   title={RemovalNet: DNN Fingerprint Removal Attacks},
-  author={Yao, Hongwei Li, Zheng and Huang, KunZhe and Lou, Jian and Qin, Zhan and Ren, Kui},
-  journal={arXiv preprint arXiv:2308.12319},
-  year={2023}
+  author={Yao, Hongwei and Li, Zheng and Huang, Kunzhe and Lou, Jian and Qin, Zhan and Ren, Kui},
+  journal={IEEE Transactions on Dependable and Secure Computing},
+  number={01},
+  pages={1--14},
+  year={2023},
+  publisher={IEEE Computer Society}
 }
 ```
 
