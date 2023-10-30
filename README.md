@@ -1,6 +1,6 @@
 # RemovalNet
 
-This repository is the official implementation of paper: **"RemovalNet: DNN model fingerprinting removal attack"**.
+This repository is the official implementation of paper: **["RemovalNet: DNN model fingerprinting removal attack"](https://ieeexplore.ieee.org/abstract/document/10251039/)**.
 The RemovalNet is a min-max bi-level optimization-based DNN fingerprint removal attack that is used to *delete fingerprint-specific knowledge* while *maintaining general semantic knowledge* of the target model.
 
 
